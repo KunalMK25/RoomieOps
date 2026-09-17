@@ -21,7 +21,8 @@ Globals:
         AWS_REGION: !Ref AWS::Region
         DYNAMODB_TABLE: !Ref DocumentsTable
         S3_BUCKET: !Ref DocumentsBucket
-        BEDROCK_MODEL_ID: anthropic.claude-3-sonnet-20240229-v1:0
+        BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-5-20250929-v1:0
+        STATE_MACHINE_ARN: !Ref ProcessingStateMachine
 
 Resources:
   # S3 Bucket for document storage
@@ -225,6 +226,64 @@ Resources:
       Runtime: python3.11
       Role: !GetAtt LambdaExecutionRole.Arn
 
+  # API Lambda Functions for HTTP endpoints
+  PresignedUrlLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: spashta-api-presigned-url
+      CodeUri: ../backend/lambdas/api-presigned-url/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        CreatePresignedUrl:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpashtagestApi
+            Path: /documents
+            Method: post
+            Auth:
+              DefaultAuthorizer: CognitoAuthorizer
+
+  StartProcessingLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: spashta-api-start-processing
+      CodeUri: ../backend/lambdas/api-start-processing/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Environment:
+        Variables:
+          STATE_MACHINE_ARN: !Ref ProcessingStateMachine
+      Events:
+        StartProcessing:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpashtagestApi
+            Path: /documents/{id}/process
+            Method: post
+            Auth:
+              DefaultAuthorizer: CognitoAuthorizer
+
+  GetDocumentLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: spashta-api-get-document
+      CodeUri: ../backend/lambdas/api-get-document/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        GetDocument:
+          Type: Api
+          Properties:
+            RestApiId: !Ref SpashtagestApi
+            Path: /documents/{id}
+            Method: get
+            Auth:
+              DefaultAuthorizer: CognitoAuthorizer
+
   # Step Functions State Machine
   ProcessingStateMachine:
     Type: AWS::Serverless::StateMachine
@@ -240,15 +299,9 @@ Resources:
             FunctionName: !Ref RiskClassifyLambda
         - LambdaInvokePolicy:
             FunctionName: !Ref ExplanationLambda
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DocumentsTable
       DefinitionUri: ../backend/stepfunctions/definition.yaml
-
-  # API Gateway Resources and Methods (to be expanded)
-  DocumentsResource:
-    Type: AWS::ApiGateway::Resource
-    Properties:
-      RestApiId: !Ref SpashtagestApi
-      ParentId: !GetAtt SpashtagestApi.RootResourceId
-      PathPart: documents
 
 Outputs:
   ApiEndpoint:

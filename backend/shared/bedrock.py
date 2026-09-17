@@ -38,7 +38,7 @@ def call_bedrock(
         import os
 
         model_id = os.environ.get(
-            "BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0"
+            "BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-5-20250929-v1:0"
         )
 
     try:

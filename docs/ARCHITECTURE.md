@@ -102,7 +102,7 @@ Four independent, testable stages:
 - Frontend receives ID token for API calls
 
 #### AI (Amazon Bedrock)
-- Model: `anthropic.claude-3-sonnet-20240229-v1:0`
+- Model: `anthropic.claude-sonnet-4-5-20250929-v1:0`
 - Called 3–4 times per document (bounded, not open-ended)
 - Each stage has a versioned prompt in `prompts/`
 - JSON schema validation on all responses

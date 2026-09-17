@@ -90,12 +90,12 @@ Use this checklist to verify all components are working before the demo and offi
 ## Bedrock Verification
 
 - [ ] Bedrock access enabled in your region
-- [ ] Model `anthropic.claude-3-sonnet-20240229-v1:0` available
+- [ ] Model `anthropic.claude-sonnet-4-5-20250929-v1:0` available
 - [ ] IAM role has `bedrock:InvokeModel` permission
 - [ ] Test invocation succeeds:
   ```bash
   aws bedrock-runtime invoke-model \
-    --model-id anthropic.claude-3-sonnet-20240229-v1:0 \
+    --model-id anthropic.claude-sonnet-4-5-20250929-v1:0 \
     --body '{"prompt": "Hello", "max_tokens": 100}' \
     /tmp/response.json
   ```
