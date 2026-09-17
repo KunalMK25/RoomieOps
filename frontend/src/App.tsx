@@ -3,31 +3,41 @@ import './App.css'
 import Upload from './screens/Upload'
 import Processing from './screens/Processing'
 import Results from './screens/Results'
+import { ProcessedDocument, Language } from './types'
 
 type Screen = 'upload' | 'processing' | 'results'
 
-interface ProcessingState {
-  documentId: string
-  docType: string
-  situation: string
-}
-
 function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('upload')
-  const [processingState, setProcessingState] = useState<ProcessingState | null>(null)
+  const [processingState, setProcessingState] = useState<{
+    documentId: string
+    docType: string
+    situation: string
+    language: Language
+    file?: File
+  } | null>(null)
+  const [result, setResult] = useState<ProcessedDocument | null>(null)
 
-  const handleUploadSubmit = (documentId: string, docType: string, situation: string) => {
-    setProcessingState({ documentId, docType, situation })
+  const handleUploadSubmit = (
+    documentId: string,
+    docType: string,
+    situation: string,
+    language: Language,
+    file: File
+  ) => {
+    setProcessingState({ documentId, docType, situation, language, file })
     setCurrentScreen('processing')
   }
 
-  const handleProcessingComplete = () => {
+  const handleProcessingComplete = (processedDoc: ProcessedDocument) => {
+    setResult(processedDoc)
     setCurrentScreen('results')
   }
 
   const handleReset = () => {
     setCurrentScreen('upload')
     setProcessingState(null)
+    setResult(null)
   }
 
   return (
@@ -38,12 +48,14 @@ function App() {
       {currentScreen === 'processing' && processingState && (
         <Processing 
           documentId={processingState.documentId}
+          situation={processingState.situation}
+          language={processingState.language}
           onComplete={handleProcessingComplete}
         />
       )}
-      {currentScreen === 'results' && processingState && (
+      {currentScreen === 'results' && result && (
         <Results 
-          documentId={processingState.documentId}
+          result={result}
           onReset={handleReset}
         />
       )}

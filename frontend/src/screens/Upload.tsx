@@ -1,32 +1,36 @@
 import { useState } from 'react'
 import './Upload.css'
+import { Language } from '../types'
 
 interface UploadProps {
-  onSubmit: (documentId: string, docType: string, situation: string) => void
+  onSubmit: (documentId: string, docType: string, situation: string, language: Language, file: File) => void
 }
 
 export default function Upload({ onSubmit }: UploadProps) {
   const [docType, setDocType] = useState('academic_regulation')
   const [situation, setSituation] = useState('')
   const [fileName, setFileName] = useState('')
+  const [file, setFile] = useState<File | null>(null)
+  const [language, setLanguage] = useState<Language>('en')
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (file) {
-      setFileName(file.name)
+    const selectedFile = e.target.files?.[0]
+    if (selectedFile) {
+      setFileName(selectedFile.name)
+      setFile(selectedFile)
     }
   }
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    if (!fileName || !situation.trim()) {
+    if (!file || !situation.trim()) {
       alert('Please select a file and describe your situation')
       return
     }
 
     // Generate a document ID
-    const documentId = `doc-${Date.now()}`
-    onSubmit(documentId, docType, situation)
+    const documentId = `doc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    onSubmit(documentId, docType, situation, language, file)
   }
 
   return (
@@ -78,6 +82,19 @@ export default function Upload({ onSubmit }: UploadProps) {
             className="textarea"
             rows={4}
           />
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="language">Explanation Language</label>
+          <select
+            id="language"
+            value={language}
+            onChange={(e) => setLanguage(e.target.value as Language)}
+            className="select"
+          >
+            <option value="en">English</option>
+            <option value="kn">ಕನ್ನಡ (Kannada)</option>
+          </select>
         </div>
 
         <button type="submit" className="button-primary">

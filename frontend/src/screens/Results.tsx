@@ -1,44 +1,35 @@
 import { useState } from 'react'
 import './Results.css'
+import { ProcessedDocument, Language, RiskTier } from '../types'
 
 interface ResultsProps {
-  documentId: string
+  result: ProcessedDocument
   onReset: () => void
 }
 
-type RiskTier = 'green' | 'yellow' | 'red'
-
-interface Result {
-  riskTier: RiskTier
-  clauseId: string
-  reasoning: string
-  confidence: 'high' | 'medium' | 'low'
-  explanation: string
-  clause: {
-    id: string
-    text: string
-    section: string
-  }
-}
-
-export default function Results({ documentId, onReset }: ResultsProps) {
+export default function Results({ result, onReset }: ResultsProps) {
   const [expandedWhy, setExpandedWhy] = useState(false)
-  const [language, setLanguage] = useState('en')
+  const [language, setLanguage] = useState<Language>('en')
 
-  // Mock result for demo
-  const result: Result = {
-    riskTier: 'red',
-    clauseId: 'c1',
-    reasoning: 'Stated attendance (72%) is below the 75% threshold in clause 4.2.',
-    confidence: 'high',
-    explanation:
-      'Your attendance is currently below the required 75% threshold. You may be ineligible to write your exam unless you have documented medical exemption or successfully appeal for condonation.',
-    clause: {
-      id: 'c1',
-      text: 'All students are required to maintain a minimum attendance of 75% in all courses across the academic session.',
-      section: '4.1',
-    },
+  if (!result.riskResult || !result.extractedClauses) {
+    return (
+      <div className="results-screen">
+        <div className="results-container">
+          <button onClick={onReset} className="button-back">
+            ← Back
+          </button>
+          <p>Processing failed or incomplete.</p>
+          <button onClick={onReset} className="button-secondary">
+            Start Over
+          </button>
+        </div>
+      </div>
+    )
   }
+
+  const riskResult = result.riskResult
+  const sourceClause = result.extractedClauses.find((c) => c.clauseId === riskResult.clauseId)
+  const explanation = result.explanations?.[language] || result.explanations?.['en'] || 'No explanation available'
 
   const riskLabels: Record<RiskTier, string> = {
     green: 'All Clear',
@@ -65,14 +56,14 @@ export default function Results({ documentId, onReset }: ResultsProps) {
           ← Back
         </button>
 
-        <div className={`risk-card risk-${result.riskTier}`}>
-          <div className="risk-emoji">{riskEmojis[result.riskTier]}</div>
-          <div className="risk-label">{riskLabels[result.riskTier]}</div>
-          <p className="risk-description">{riskDescriptions[result.riskTier]}</p>
+        <div className={`risk-card risk-${riskResult.riskTier}`}>
+          <div className="risk-emoji">{riskEmojis[riskResult.riskTier]}</div>
+          <div className="risk-label">{riskLabels[riskResult.riskTier]}</div>
+          <p className="risk-description">{riskDescriptions[riskResult.riskTier]}</p>
         </div>
 
         <div className="explanation-box">
-          <p>{result.explanation}</p>
+          <p>{explanation}</p>
         </div>
 
         <button
@@ -86,27 +77,29 @@ export default function Results({ documentId, onReset }: ResultsProps) {
           <div className="why-details">
             <div className="reasoning-section">
               <h4>Reasoning</h4>
-              <p>{result.reasoning}</p>
+              <p>{riskResult.reasoning}</p>
             </div>
 
-            <div className="clause-section">
-              <h4>Source Clause</h4>
-              <div className="clause-box">
-                <div className="clause-section-ref">Section {result.clause.section}</div>
-                <blockquote>{result.clause.text}</blockquote>
+            {sourceClause && (
+              <div className="clause-section">
+                <h4>Source Clause</h4>
+                <div className="clause-box">
+                  <div className="clause-section-ref">Section {sourceClause.section}</div>
+                  <blockquote>{sourceClause.text}</blockquote>
+                </div>
               </div>
-            </div>
+            )}
 
             <div className="confidence-section">
               <h4>Confidence</h4>
               <p className="confidence-badge">
-                {result.confidence === 'high'
+                {riskResult.confidence === 'high'
                   ? '✓ High'
-                  : result.confidence === 'medium'
+                  : riskResult.confidence === 'medium'
                   ? '~ Medium'
                   : '⚠ Low'}
               </p>
-              {result.confidence === 'low' && (
+              {riskResult.confidence === 'low' && (
                 <p className="confidence-note">
                   This result requires manual verification. Please review the source clause carefully.
                 </p>
@@ -119,7 +112,7 @@ export default function Results({ documentId, onReset }: ResultsProps) {
           <label>Language:</label>
           <select
             value={language}
-            onChange={(e) => setLanguage(e.target.value)}
+            onChange={(e) => setLanguage(e.target.value as Language)}
             className="language-select"
           >
             <option value="en">English</option>
