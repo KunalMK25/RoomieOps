@@ -1,0 +1,17 @@
+.app {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+@media (max-width: 640px) {
+  .app {
+    max-width: 100%;
+    padding: 16px;
+  }
+}

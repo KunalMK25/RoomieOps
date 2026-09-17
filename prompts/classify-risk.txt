@@ -1,0 +1,32 @@
+You are an expert risk analyst specializing in regulatory compliance.
+
+Your task: Classify the risk tier based on clause matches and the user's situation.
+
+INSTRUCTIONS:
+1. Analyze the matched clauses and user's situation
+2. Determine the primary risk:
+   - "green": No significant issue detected
+   - "yellow": A condition, exception, or requirement that needs checking
+   - "red": Potential conflict between situation and requirement
+3. Identify the most relevant clauseId
+4. Provide reasoning grounded in the clause text
+5. Assess confidence: "high", "medium", or "low"
+6. Output MUST be valid JSON
+7. If confidence is low, still return the tier but clearly indicate the uncertainty
+8. Never fabricate reasons not supported by the clauses
+
+MATCHED CLAUSES:
+{matches_json}
+
+USER SITUATION:
+{situation}
+
+OUTPUT FORMAT:
+{
+  "riskTier": "red",
+  "clauseId": "c1",
+  "reasoning": "Stated attendance (72%) is below the 75% threshold in clause 4.2.",
+  "confidence": "high"
+}
+
+Begin classification:

@@ -1,0 +1,137 @@
+Comment: Spashta Document Processing Pipeline - 4-stage reasoning
+StartAt: Extract
+States:
+  Extract:
+    Type: Task
+    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Parameters:
+      FunctionName: spashta-extract
+      Payload:
+        documentId.$: $.documentId
+        s3Key.$: $.s3Key
+    ResultPath: $.extractionResult
+    Catch:
+      - ErrorEquals: ['States.TaskFailed']
+        Next: ExtractionFailed
+    Next: MatchSituation
+
+  MatchSituation:
+    Type: Task
+    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Parameters:
+      FunctionName: spashta-match-situation
+      Payload:
+        documentId.$: $.documentId
+        clauses.$: $.extractionResult.Payload.clauses
+        situation.$: $.situation
+    ResultPath: $.matchingResult
+    Catch:
+      - ErrorEquals: ['States.TaskFailed']
+        Next: MatchingFailed
+    Next: RiskClassify
+
+  RiskClassify:
+    Type: Task
+    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Parameters:
+      FunctionName: spashta-risk-classify
+      Payload:
+        documentId.$: $.documentId
+        matches.$: $.matchingResult.Payload.matches
+        situation.$: $.situation
+    ResultPath: $.classificationResult
+    Catch:
+      - ErrorEquals: ['States.TaskFailed']
+        Next: ClassificationFailed
+    Next: GenerateExplanation
+
+  GenerateExplanation:
+    Type: Task
+    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Parameters:
+      FunctionName: spashta-explanation
+      Payload:
+        documentId.$: $.documentId
+        riskResult.$: $.classificationResult.Payload
+        clauses.$: $.extractionResult.Payload.clauses
+        language.$: $.language
+    ResultPath: $.explanationResult
+    Catch:
+      - ErrorEquals: ['States.TaskFailed']
+        Next: ExplanationFailed
+    Next: SaveResults
+
+  SaveResults:
+    Type: Task
+    Resource: arn:aws:states:::dynamodb:updateItem
+    Parameters:
+      TableName: !Ref DocumentsTable
+      Key:
+        documentId:
+          S.$: $.documentId
+      UpdateExpression: 'SET #status = :status, #results = :results, #updatedAt = :updatedAt'
+      ExpressionAttributeNames:
+        '#status': 'status'
+        '#results': 'results'
+        '#updatedAt': 'updatedAt'
+      ExpressionAttributeValues:
+        ':status':
+          S: 'complete'
+        ':results':
+          M:
+            clauses:
+              L.$: $.extractionResult.Payload.clauses
+            riskTier:
+              S.$: $.classificationResult.Payload.riskTier
+            explanation:
+              S.$: $.explanationResult.Payload.explanation
+        ':updatedAt':
+          S.$: $$.State.EnteredTime
+    Next: Success
+
+  ExtractionFailed:
+    Type: Pass
+    Result: 'Extraction stage failed'
+    Next: FailureState
+
+  MatchingFailed:
+    Type: Pass
+    Result: 'Situation matching stage failed'
+    Next: FailureState
+
+  ClassificationFailed:
+    Type: Pass
+    Result: 'Risk classification stage failed'
+    Next: FailureState
+
+  ExplanationFailed:
+    Type: Pass
+    Result: 'Explanation generation stage failed'
+    Next: FailureState
+
+  FailureState:
+    Type: Task
+    Resource: arn:aws:states:::dynamodb:updateItem
+    Parameters:
+      TableName: !Ref DocumentsTable
+      Key:
+        documentId:
+          S.$: $.documentId
+      UpdateExpression: 'SET #status = :status, #error = :error'
+      ExpressionAttributeNames:
+        '#status': 'status'
+        '#error': 'error'
+      ExpressionAttributeValues:
+        ':status':
+          S: 'failed'
+        ':error':
+          S.$: $.Result
+    Next: Fail
+
+  Success:
+    Type: Succeed
+
+  Fail:
+    Type: Fail
+    Error: ProcessingFailed
+    Cause: Document processing pipeline encountered an error

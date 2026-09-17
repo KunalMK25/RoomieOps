@@ -1,0 +1,44 @@
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# AWS/credentials
+.aws/
+aws_credentials
+
+# Node
+node_modules/
+package-lock.json
+dist/
+build/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+env/
+
+# Local development
+.DS_Store
+*.swp
+*.swo
+*~
+.vscode/settings.json
+
+# SAM/LocalStack
+.aws-sam/
+sam-tests/
+localstack/
+
+# Amplify
+amplify/
+
+# IDE
+.idea/
+*.iml
+
+# Logs
+logs/
+*.log
