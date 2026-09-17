@@ -3,61 +3,70 @@ StartAt: Extract
 States:
   Extract:
     Type: Task
-    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Resource: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:spashta-extract
     Parameters:
-      FunctionName: spashta-extract
-      Payload:
-        documentId.$: $.documentId
-        s3Key.$: $.s3Key
+      documentId.$: $.documentId
+      s3Key.$: $.s3Key
+      ownerId.$: $.ownerId
     ResultPath: $.extractionResult
     Catch:
-      - ErrorEquals: ['States.TaskFailed']
+      - ErrorEquals: ["States.TaskFailed", "States.Timeout"]
         Next: ExtractionFailed
-    Next: MatchSituation
+    Retry:
+      - ErrorEquals: ["States.Timeout"]
+        IntervalSeconds: 2
+        MaxAttempts: 1
+        BackoffRate: 1.0
+    Next: CheckExtraction
+
+  CheckExtraction:
+    Type: Choice
+    Choices:
+      - Variable: $.extractionResult.Payload.clauses
+        IsNull: true
+        Next: ExtractionFailed
+      - Variable: $.extractionResult.Payload.clauses
+        NumericEquals: 0
+        Next: ExtractionFailed
+    Default: MatchSituation
 
   MatchSituation:
     Type: Task
-    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Resource: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:spashta-match-situation
     Parameters:
-      FunctionName: spashta-match-situation
-      Payload:
-        documentId.$: $.documentId
-        clauses.$: $.extractionResult.Payload.clauses
-        situation.$: $.situation
+      documentId.$: $.documentId
+      clauses.$: $.extractionResult.Payload.clauses
+      situation.$: $.situation
     ResultPath: $.matchingResult
     Catch:
-      - ErrorEquals: ['States.TaskFailed']
+      - ErrorEquals: ["States.TaskFailed"]
         Next: MatchingFailed
     Next: RiskClassify
 
   RiskClassify:
     Type: Task
-    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Resource: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:spashta-risk-classify
     Parameters:
-      FunctionName: spashta-risk-classify
-      Payload:
-        documentId.$: $.documentId
-        matches.$: $.matchingResult.Payload.matches
-        situation.$: $.situation
+      documentId.$: $.documentId
+      matches.$: $.matchingResult.Payload.matches
+      situation.$: $.situation
     ResultPath: $.classificationResult
     Catch:
-      - ErrorEquals: ['States.TaskFailed']
+      - ErrorEquals: ["States.TaskFailed"]
         Next: ClassificationFailed
     Next: GenerateExplanation
 
   GenerateExplanation:
     Type: Task
-    Resource: !Sub 'arn:aws:states:::lambda:invoke'
+    Resource: arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:spashta-explanation
     Parameters:
-      FunctionName: spashta-explanation
-      Payload:
-        documentId.$: $.documentId
-        riskResult.$: $.classificationResult.Payload
-        clauses.$: $.extractionResult.Payload.clauses
-        language.$: $.language
+      documentId.$: $.documentId
+      riskResult.$: $.classificationResult.Payload
+      clauses.$: $.extractionResult.Payload.clauses
+      language.$: $.language
     ResultPath: $.explanationResult
     Catch:
-      - ErrorEquals: ['States.TaskFailed']
+      - ErrorEquals: ["States.TaskFailed"]
         Next: ExplanationFailed
     Next: SaveResults
 
@@ -69,44 +78,68 @@ States:
       Key:
         documentId:
           S.$: $.documentId
-      UpdateExpression: 'SET #status = :status, #results = :results, #updatedAt = :updatedAt'
+      UpdateExpression: "SET #status = :status, #clauses = :clauses, #risk = :risk, #exp = :exp, #updatedAt = :updatedAt"
       ExpressionAttributeNames:
-        '#status': 'status'
-        '#results': 'results'
-        '#updatedAt': 'updatedAt'
+        "#status": "status"
+        "#clauses": "extractedClauses"
+        "#risk": "riskResult"
+        "#exp": "explanations"
+        "#updatedAt": "updatedAt"
       ExpressionAttributeValues:
-        ':status':
-          S: 'complete'
-        ':results':
-          M:
-            clauses:
-              L.$: $.extractionResult.Payload.clauses
+        ":status":
+          S: "complete"
+        ":clauses":
+          L.$: "$.extractionResult.Payload.clauses"
+        ":risk":
+          M: 
             riskTier:
               S.$: $.classificationResult.Payload.riskTier
-            explanation:
+            clauseId:
+              S.$: $.classificationResult.Payload.clauseId
+            reasoning:
+              S.$: $.classificationResult.Payload.reasoning
+            confidence:
+              S.$: $.classificationResult.Payload.confidence
+        ":exp":
+          M:
+            en:
               S.$: $.explanationResult.Payload.explanation
-        ':updatedAt':
+        ":updatedAt":
           S.$: $$.State.EnteredTime
+    ResultPath: $.saveResult
+    Catch:
+      - ErrorEquals: ["States.ALL"]
+        Next: SaveFailed
     Next: Success
 
   ExtractionFailed:
     Type: Pass
-    Result: 'Extraction stage failed'
+    Result: "Document extraction produced no valid clauses"
+    ResultPath: $.error
     Next: FailureState
 
   MatchingFailed:
     Type: Pass
-    Result: 'Situation matching stage failed'
+    Result: "Situation matching failed"
+    ResultPath: $.error
     Next: FailureState
 
   ClassificationFailed:
     Type: Pass
-    Result: 'Risk classification stage failed'
+    Result: "Risk classification failed"
+    ResultPath: $.error
     Next: FailureState
 
   ExplanationFailed:
     Type: Pass
-    Result: 'Explanation generation stage failed'
+    Result: "Explanation generation failed"
+    ResultPath: $.error
+    Next: FailureState
+
+  SaveFailed:
+    Type: Pass
+    Result: "Failed to save results to database"
+    ResultPath: $.error
     Next: FailureState
 
   FailureState:
@@ -117,15 +150,18 @@ States:
       Key:
         documentId:
           S.$: $.documentId
-      UpdateExpression: 'SET #status = :status, #error = :error'
+      UpdateExpression: "SET #status = :status, #error = :error, #updatedAt = :updatedAt"
       ExpressionAttributeNames:
-        '#status': 'status'
-        '#error': 'error'
+        "#status": "status"
+        "#error": "error"
+        "#updatedAt": "updatedAt"
       ExpressionAttributeValues:
-        ':status':
-          S: 'failed'
-        ':error':
-          S.$: $.Result
+        ":status":
+          S: "failed"
+        ":error":
+          S.$: $.error
+        ":updatedAt":
+          S.$: $$.State.EnteredTime
     Next: Fail
 
   Success:

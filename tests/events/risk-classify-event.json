@@ -1,0 +1,16 @@
+{
+  "documentId": "doc-test-001",
+  "matches": [
+    {
+      "clauseId": "c1",
+      "relevance": "direct",
+      "userFact": "72% attendance is below 75% threshold"
+    },
+    {
+      "clauseId": "c2",
+      "relevance": "exception",
+      "userFact": "Medical reason for absences"
+    }
+  ],
+  "situation": "I have 72% attendance and missed classes because of a medical reason."
+}

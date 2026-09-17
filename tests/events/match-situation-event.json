@@ -1,0 +1,16 @@
+{
+  "documentId": "doc-test-001",
+  "clauses": [
+    {
+      "clauseId": "c1",
+      "text": "All students are required to maintain a minimum attendance of 75% in all courses across the academic session.",
+      "section": "4.1"
+    },
+    {
+      "clauseId": "c2",
+      "text": "Students may request condonation of absence due to medical reasons with appropriate documentation.",
+      "section": "5.1"
+    }
+  ],
+  "situation": "I have 72% attendance and missed classes because of a medical reason."
+}

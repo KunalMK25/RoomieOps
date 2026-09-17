@@ -1,0 +1,17 @@
+{
+  "documentId": "doc-test-001",
+  "riskResult": {
+    "riskTier": "yellow",
+    "clauseId": "c1",
+    "reasoning": "Your attendance is 72%, below the 75% threshold. However, you have a medical reason which may qualify for condonation.",
+    "confidence": "high"
+  },
+  "clauses": [
+    {
+      "clauseId": "c1",
+      "text": "All students are required to maintain a minimum attendance of 75% in all courses across the academic session.",
+      "section": "4.1"
+    }
+  ],
+  "language": "en"
+}
