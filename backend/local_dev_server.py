@@ -32,6 +32,18 @@ except ImportError:
     BEDROCK_AVAILABLE = False
     print("⚠️ Bedrock module not found - using mock responses")
 
+# Initialize provider layer based on execution mode
+try:
+    from providers import ExecutionModeManager
+    import logging
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+    
+    providers = ExecutionModeManager.init()
+    logger.info(f"✓ Providers initialized: {ExecutionModeManager.current_mode()}")
+except Exception as e:
+    print(f"⚠️ Provider initialization failed: {e}")
+
 app = Flask(__name__)
 CORS(app)
 
@@ -168,6 +180,32 @@ def health():
             "storage": str(DOCUMENTS_DIR),
         }
     )
+
+
+@app.route("/status", methods=["GET"])
+def status():
+    """Return execution mode and provider status."""
+    try:
+        from providers import ExecutionModeManager
+        from providers.types import ExecutionMode
+        
+        mode = ExecutionModeManager.current_mode()
+        providers = ExecutionModeManager.get_cached_providers()
+        
+        return jsonify({
+            "status": "ok",
+            "execution_mode": str(mode) if mode else "NOT_INITIALIZED",
+            "providers_initialized": providers is not None,
+            "llm_available": providers.llm is not None if providers else False,
+            "storage_available": providers.storage is not None if providers else False,
+            "auth_available": providers.auth is not None if providers else False,
+            "timestamp": datetime.utcnow().isoformat(),
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e),
+        }), 500
 
 
 @app.route("/api/v1/presigned-url", methods=["POST"])
