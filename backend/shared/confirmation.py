@@ -10,6 +10,8 @@ Flow:
 4. Backend revalidates and executes
 5. State is mutated atomically
 6. Audit record created
+
+Refactored to use StorageProvider abstraction for BUILD_IT/SHIP_IT support.
 """
 
 import json
@@ -21,6 +23,33 @@ from enum import Enum
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+
+# Storage provider (injected at runtime)
+_storage_provider = None
+
+
+def set_storage_provider(provider):
+    """Set the storage provider for ConfirmationManager."""
+    global _storage_provider
+    _storage_provider = provider
+    logger.info(f"ConfirmationManager storage provider set to: {type(provider).__name__}")
+
+
+def get_storage_provider():
+    """Get current storage provider (initializes if needed)."""
+    global _storage_provider
+    if _storage_provider is None:
+        # Lazy initialization: detect provider based on environment
+        try:
+            from .providers import ExecutionModeManager
+            providers = ExecutionModeManager.get_providers()
+            _storage_provider = providers.storage
+            logger.info(f"ConfirmationManager auto-initialized with: {type(_storage_provider).__name__}")
+        except Exception as e:
+            logger.error(f"Failed to auto-initialize storage provider: {e}")
+            raise
+    return _storage_provider
 
 
 class ActionType(Enum):
@@ -111,19 +140,13 @@ class ConfirmationManager:
     
     Responsibilities:
     - Create pending action proposal
-    - Store in DynamoDB with TTL
+    - Store in StorageProvider with TTL
     - Retrieve and validate proposal
     - Execute after confirmation
     - Audit all state changes
+    
+    Now abstracted over StorageProvider (DynamoDB, LocalStack, InMemory).
     """
-    
-    # DynamoDB table reference (injected at init time by calling module)
-    _table = None
-    
-    @staticmethod
-    def set_table(table):
-        """Set DynamoDB table reference."""
-        ConfirmationManager._table = table
     
     @staticmethod
     def create_pending_action(
@@ -153,42 +176,34 @@ class ConfirmationManager:
             expires_at=expires_at,
         )
         
-        # Store in DynamoDB
-        if ConfirmationManager._table:
-            try:
-                item = {
-                    "pk": f"HOUSEHOLD#{household_id}",
-                    "sk": f"PENDING#{action_id}",
-                    "household_id": household_id,
-                    "action_id": action_id,
-                    **pending.to_dict(),
-                    "ttl": int(datetime.fromisoformat(expires_at).timestamp()),
-                }
-                ConfirmationManager._table.put_item(Item=item)
-                logger.info(f"Created pending action: {action_id}")
-            except Exception as e:
-                logger.error(f"Failed to store pending action: {e}")
-                raise
-        else:
-            logger.warning("DynamoDB table not configured for ConfirmationManager")
+        # Store in StorageProvider
+        try:
+            item = {
+                "pk": f"HOUSEHOLD#{household_id}",
+                "sk": f"PENDING#{action_id}",
+                "household_id": household_id,
+                "action_id": action_id,
+                **pending.to_dict(),
+                "ttl": int(datetime.fromisoformat(expires_at).timestamp()),
+            }
+            get_storage_provider().put_item(item)
+            logger.info(f"Created pending action: {action_id}")
+        except Exception as e:
+            logger.error(f"Failed to store pending action: {e}")
+            raise
         
         return action_id
     
     @staticmethod
     def get_pending_action(household_id: str, action_id: str) -> Optional[PendingAction]:
         """Retrieve a pending action by ID."""
-        if not ConfirmationManager._table:
-            return None
-        
         try:
-            response = ConfirmationManager._table.get_item(
-                Key={
-                    "pk": f"HOUSEHOLD#{household_id}",
-                    "sk": f"PENDING#{action_id}",
-                }
+            item = get_storage_provider().get_item(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk=f"PENDING#{action_id}"
             )
-            if "Item" in response:
-                return PendingAction.from_dict(response["Item"])
+            if item:
+                return PendingAction.from_dict(item)
             return None
         except Exception as e:
             logger.error(f"Failed to retrieve pending action: {e}")
@@ -248,14 +263,13 @@ class ConfirmationManager:
         # If rejected, mark and return
         if not confirmed:
             try:
-                if ConfirmationManager._table:
-                    pending.status = ActionStatus.REJECTED
-                    item = {
-                        "pk": f"HOUSEHOLD#{household_id}",
-                        "sk": f"PENDING#{action_id}",
-                        **pending.to_dict(),
-                    }
-                    ConfirmationManager._table.put_item(Item=item)
+                pending.status = ActionStatus.REJECTED
+                item = {
+                    "pk": f"HOUSEHOLD#{household_id}",
+                    "sk": f"PENDING#{action_id}",
+                    **pending.to_dict(),
+                }
+                get_storage_provider().put_item(item)
                 logger.info(f"Action rejected: {action_id}")
             except Exception as e:
                 logger.error(f"Failed to mark action as rejected: {e}")
@@ -274,13 +288,12 @@ class ConfirmationManager:
             pending.status = ActionStatus.EXECUTED
             pending.executed_at = datetime.utcnow().isoformat()
             
-            if ConfirmationManager._table:
-                item = {
-                    "pk": f"HOUSEHOLD#{household_id}",
-                    "sk": f"PENDING#{action_id}",
-                    **pending.to_dict(),
-                }
-                ConfirmationManager._table.put_item(Item=item)
+            item = {
+                "pk": f"HOUSEHOLD#{household_id}",
+                "sk": f"PENDING#{action_id}",
+                **pending.to_dict(),
+            }
+            get_storage_provider().put_item(item)
             
             logger.info(f"Action executed: {action_id}")
             
@@ -295,16 +308,15 @@ class ConfirmationManager:
             
             # Mark as failed
             pending.status = ActionStatus.FAILED
-            if ConfirmationManager._table:
-                try:
-                    item = {
-                        "pk": f"HOUSEHOLD#{household_id}",
-                        "sk": f"PENDING#{action_id}",
-                        **pending.to_dict(),
-                    }
-                    ConfirmationManager._table.put_item(Item=item)
-                except:
-                    pass
+            try:
+                item = {
+                    "pk": f"HOUSEHOLD#{household_id}",
+                    "sk": f"PENDING#{action_id}",
+                    **pending.to_dict(),
+                }
+                get_storage_provider().put_item(item)
+            except:
+                pass
             
             return {
                 "status": "failed",
