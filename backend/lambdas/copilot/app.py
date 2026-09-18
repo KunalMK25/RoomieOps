@@ -23,7 +23,8 @@ import uuid
 sys.path.insert(0, "/opt/python")
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../shared"))
 
-from auth import require_auth, verify_household_membership, AuthenticatedUser
+from auth import require_auth, verify_household_membership
+from providers.types import AuthenticatedUser
 from dynamodb_ops import DynamoDBOps
 from bedrock_client import BedrockOps, BedrockError
 from strands_agent import RoomieOpsAgent, ToolExecutionContext
