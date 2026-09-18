@@ -70,14 +70,17 @@ def record_payment(user, household_id, body):
         to_user = body.get("to_user_id")
         amount_paise = body.get("amount_paise")
         description = body.get("description", "Payment")
-        request_id = body.get("requestId")
+        request_id = body.get("requestId", str(uuid.uuid4()))
 
         if not from_user or not to_user or not amount_paise:
             return error_response(400, "Missing: from_user_id, to_user_id, amount_paise")
 
-        # TODO: Idempotency check
-        # TODO: Update balances
+        # Idempotency: Check if this payment already recorded
+        existing_payment = DynamoDBOps.get_payment(household_id, request_id)
+        if existing_payment:
+            return success_response(200, existing_payment)
 
+        # Record payment
         payment_id = str(uuid.uuid4())
         payment = {
             "payment_id": payment_id,
@@ -87,7 +90,32 @@ def record_payment(user, household_id, body):
             "description": description,
             "created_by": user.user_id,
             "created_at": datetime.utcnow().isoformat(),
+            "request_id": request_id,
         }
+
+        DynamoDBOps.record_payment(household_id, payment)
+
+        # Update balances
+        # from_user balance decreases (owes less)
+        from_balance = DynamoDBOps.get_balance(household_id, from_user) or 0
+        DynamoDBOps.set_balance(household_id, from_user, from_balance - amount_paise)
+
+        # to_user balance increases (owed more)
+        to_balance = DynamoDBOps.get_balance(household_id, to_user) or 0
+        DynamoDBOps.set_balance(household_id, to_user, to_balance + amount_paise)
+
+        # Audit
+        DynamoDBOps._audit_log(
+            household_id,
+            "PAYMENT_RECORDED",
+            {
+                "payment_id": payment_id,
+                "from_user": from_user,
+                "to_user": to_user,
+                "amount_paise": amount_paise,
+                "request_id": request_id,
+            }
+        )
 
         return success_response(201, payment)
     except Exception as e:
