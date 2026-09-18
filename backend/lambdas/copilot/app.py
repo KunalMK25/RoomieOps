@@ -28,6 +28,7 @@ from dynamodb_ops import DynamoDBOps
 from bedrock_client import BedrockOps, BedrockError
 from strands_agent import RoomieOpsAgent, ToolExecutionContext
 from confirmation import ConfirmationManager, ActionType
+from execution_modes import ExecutionMode, determine_execution_mode, wrap_response
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -116,16 +117,21 @@ def process_copilot_request(user: AuthenticatedUser, household_id: str, body: di
 
         logger.info(f"Agent result: {json.dumps(result)}")
 
-        return success_response(200, {
+        # Return result with execution mode clearly labeled
+        execution_mode = determine_execution_mode()
+        
+        response = {
             "message": request_text,
             "agent_response": result.get("response", ""),
-            "agent_type": result.get("agent_type", "unknown"),
+            "execution_mode": execution_mode.value,
             "actions_taken": result.get("actions_taken", []),
             "status": result.get("status", "unknown"),
             "requires_confirmation": result.get("requires_confirmation", False),
             "action_id": result.get("action_id"),
             "data": result
-        })
+        }
+
+        return success_response(200, wrap_response(response, execution_mode))
 
     except Exception as e:
         logger.error(f"Error processing copilot request: {str(e)}", exc_info=True)
