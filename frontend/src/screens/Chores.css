@@ -1,0 +1,144 @@
+.chores {
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.chores h2 {
+  margin-bottom: 20px;
+  color: #333;
+}
+
+.chores-controls {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.chores-controls button {
+  padding: 8px 16px;
+  background: #f0f0f0;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: all 0.2s;
+}
+
+.chores-controls button:hover {
+  background: #e0e0e0;
+}
+
+.chores-controls button.active {
+  background: #667eea;
+  color: white;
+  border-color: #667eea;
+}
+
+.chores-list {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  margin-bottom: 20px;
+}
+
+.chore-card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  transition: box-shadow 0.2s;
+}
+
+.chore-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.chore-card.completed {
+  background: #f5fff5;
+  border-color: #d0e8d0;
+}
+
+.chore-content {
+  flex: 1;
+}
+
+.chore-card h4 {
+  margin: 0 0 8px 0;
+  color: #333;
+  font-size: 16px;
+}
+
+.chore-meta,
+.chore-frequency,
+.chore-due {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #666;
+}
+
+.chore-card.completed h4 {
+  text-decoration: line-through;
+  color: #999;
+}
+
+.status-btn {
+  padding: 8px 16px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.2s;
+  white-space: nowrap;
+  margin-left: 16px;
+}
+
+.status-btn:hover {
+  background: #5568d3;
+}
+
+.status-btn.completed {
+  background: #080;
+}
+
+.status-btn.completed:hover {
+  background: #060;
+}
+
+.refresh-btn {
+  padding: 10px 20px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.refresh-btn:hover {
+  background: #5568d3;
+}
+
+.empty {
+  color: #999;
+  font-style: italic;
+  padding: 20px 0;
+  text-align: center;
+}
+
+.error {
+  background: #fee;
+  border: 1px solid #fcc;
+  color: #c00;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}

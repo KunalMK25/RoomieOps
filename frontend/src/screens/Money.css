@@ -1,0 +1,166 @@
+.money {
+  padding: 20px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+.money h2 {
+  margin-bottom: 30px;
+  color: #333;
+}
+
+.card {
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 20px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.balance-summary {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: white;
+}
+
+.balance-summary h3 {
+  color: white;
+  margin: 0 0 15px 0;
+}
+
+.balance-text {
+  font-size: 32px;
+  font-weight: bold;
+  margin: 10px 0;
+}
+
+.balance-detail {
+  font-size: 14px;
+  opacity: 0.9;
+  margin: 10px 0 0 0;
+}
+
+.expense-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.expense-item {
+  border: 1px solid #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.expense-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px;
+  background: #fafafa;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.expense-header:hover {
+  background: #f0f0f0;
+}
+
+.expense-description {
+  margin: 0 0 5px 0;
+  font-weight: 500;
+  color: #333;
+}
+
+.expense-amount {
+  margin: 0;
+  font-size: 16px;
+  font-weight: bold;
+  color: #667eea;
+}
+
+.expense-date {
+  margin: 0;
+  color: #999;
+  font-size: 12px;
+}
+
+.expense-detail {
+  padding: 12px;
+  background: white;
+  border-top: 1px solid #f0f0f0;
+  font-size: 13px;
+  color: #666;
+}
+
+.expense-detail p {
+  margin: 8px 0;
+}
+
+.expense-detail ul {
+  margin: 8px 0 0 20px;
+  padding: 0;
+}
+
+.expense-detail li {
+  margin: 4px 0;
+}
+
+.balances-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.balances-table th,
+.balances-table td {
+  padding: 12px;
+  text-align: left;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.balances-table th {
+  background: #fafafa;
+  font-weight: 600;
+  color: #333;
+}
+
+.balances-table td.positive {
+  color: #080;
+  font-weight: 500;
+}
+
+.balances-table td.negative {
+  color: #c00;
+  font-weight: 500;
+}
+
+.refresh-btn {
+  padding: 10px 20px;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: background 0.2s;
+}
+
+.refresh-btn:hover {
+  background: #5568d3;
+}
+
+.empty {
+  color: #999;
+  font-style: italic;
+  padding: 20px 0;
+  text-align: center;
+}
+
+.error {
+  background: #fee;
+  border: 1px solid #fcc;
+  color: #c00;
+  padding: 15px;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
