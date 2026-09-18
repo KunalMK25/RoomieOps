@@ -1,39 +1,61 @@
 """
-RoomieOps Bedrock Client
+RoomieOps LLM Client
 
-Wrapper around AWS Bedrock API for intent detection and explanation generation.
-Uses Claude Sonnet (current model, per spec §37).
+Abstraction over AI providers for intent detection and explanation generation.
 
-Model: anthropic.claude-sonnet-4-5-20250929-v1:0
+Supports multiple backends:
+- SHIP_IT: AWS Bedrock (Claude Sonnet)
+- BUILD_IT: Ollama (local model via Strands)
+- LOCAL_HEURISTIC: Simple rule-based fallback
+
+Refactored to use LLMProvider abstraction.
 """
 
 import json
-import os
 import logging
-from typing import Dict, Optional, List
-
-import boto3
-from botocore.exceptions import ClientError
+from typing import Dict, Optional
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-# Configuration
-AWS_REGION = os.environ.get("AWS_REGION", "us-east-1")
-BEDROCK_MODEL_ID = os.environ.get(
-    "BEDROCK_MODEL_ID", "anthropic.claude-sonnet-4-5-20250929-v1:0"
-)
+# LLM provider (injected at runtime)
+_llm_provider = None
 
-bedrock_client = boto3.client("bedrock-runtime", region_name=AWS_REGION)
+
+def set_llm_provider(provider):
+    """Set the LLM provider for BedrockOps."""
+    global _llm_provider
+    _llm_provider = provider
+    logger.info(f"BedrockOps LLM provider set to: {type(provider).__name__}")
+
+
+def get_llm_provider():
+    """Get current LLM provider (initializes if needed)."""
+    global _llm_provider
+    if _llm_provider is None:
+        # Lazy initialization: detect provider based on environment
+        try:
+            from .providers import ExecutionModeManager
+            providers = ExecutionModeManager.get_providers()
+            _llm_provider = providers.llm
+            logger.info(f"BedrockOps auto-initialized with: {type(_llm_provider).__name__}")
+        except Exception as e:
+            logger.error(f"Failed to auto-initialize LLM provider: {e}")
+            raise
+    return _llm_provider
 
 
 class BedrockError(Exception):
-    """Raised when Bedrock invocation fails."""
+    """Raised when LLM invocation fails."""
     pass
 
 
 class BedrockOps:
-    """Bedrock operations for RoomieOps."""
+    """LLM operations for RoomieOps (now abstracted over providers).
+    
+    Legacy name retained for backward compatibility. Delegates all operations
+    to get_llm_provider() which returns appropriate implementation based on mode.
+    """
 
     @staticmethod
     def detect_intent(user_message: str, household_context: Dict) -> Dict:
@@ -49,88 +71,27 @@ class BedrockOps:
                 "intent": "view_balance|create_expense|complete_chore|...",
                 "entities": {...},
                 "confidence": 0.0-1.0,
-                "requires_confirmation": bool,
+                "reasoning": "explanation",
             }
 
         Raises:
-            BedrockError: If Bedrock invocation fails
+            BedrockError: If LLM invocation fails
         """
         try:
-            prompt = f"""You are the RoomieOps household copilot assistant.
-
-Analyze this user message and detect their intent.
-
-User message: "{user_message}"
-
-Household context:
-- Members: {', '.join([m.get('name', 'unknown') for m in household_context.get('members', [])])}
-- Recent balances: {household_context.get('balances', {})}
-- Active chores: {household_context.get('chore_count', 0)}
-
-Respond in JSON format only:
-{{
-  "intent": "view_balance" | "view_chores" | "create_expense" | "create_maintenance" | "add_shopping_item" | "other",
-  "entities": {{}},
-  "confidence": 0.0-1.0,
-  "reasoning": "brief explanation"
-}}
-
-Examples:
-- "How much do I owe?" → intent: view_balance
-- "What chores do I have?" → intent: view_chores
-- "I paid ₹1200 for groceries, split equally" → intent: create_expense, entities: {{payer_id, amount_paise, split_method}}
-- "The geyser is broken" → intent: create_maintenance, entities: {{description}}
-"""
-
-            response = bedrock_client.invoke_model(
-                modelId=BEDROCK_MODEL_ID,
-                contentType="application/json",
-                accept="application/json",
-                body=json.dumps({"prompt": prompt, "max_tokens": 500}),
-            )
-
-            response_body = json.loads(response["body"].read())
+            result = get_llm_provider().detect_intent(user_message, household_context)
+            logger.info(f"Intent detected: {result.intent} (confidence: {result.confidence})")
             
-            # Parse Claude response
-            if "completion" in response_body:
-                text = response_body["completion"]
-            elif "content" in response_body:
-                text = response_body["content"][0]["text"] if response_body["content"] else ""
-            else:
-                text = str(response_body)
-
-            # Extract JSON from response
-            try:
-                # Try to find JSON block
-                import re
-                json_match = re.search(r"\{.*\}", text, re.DOTALL)
-                if json_match:
-                    result = json.loads(json_match.group(0))
-                else:
-                    result = json.loads(text)
-            except (json.JSONDecodeError, AttributeError):
-                logger.warning(f"Failed to parse Bedrock response as JSON: {text}")
-                result = {
-                    "intent": "other",
-                    "entities": {},
-                    "confidence": 0.0,
-                    "reasoning": "Failed to parse response",
-                }
-
-            logger.info(f"Intent detected: {result.get('intent')} (confidence: {result.get('confidence')})")
-            return result
-
-        except ClientError as e:
-            error_code = e.response["Error"]["Code"]
-            if error_code == "AccessDenied":
-                logger.error(f"BLOCKED: Bedrock access denied - {str(e)}")
-                raise BedrockError(f"BLOCKED — BEDROCK ACCOUNT ACCESS: {str(e)}")
-            else:
-                logger.error(f"Bedrock invocation failed: {str(e)}")
-                raise BedrockError(f"Bedrock error: {str(e)}")
+            # Convert IntentDetectionResult to dict format
+            return {
+                "intent": result.intent,
+                "entities": result.entities,
+                "confidence": result.confidence,
+                "reasoning": result.reasoning,
+                "error": result.error,
+            }
         except Exception as e:
-            logger.error(f"Unexpected error during intent detection: {str(e)}", exc_info=True)
-            raise BedrockError(f"Unexpected error: {str(e)}")
+            logger.error(f"Intent detection failed: {str(e)}")
+            raise BedrockError(f"Intent detection error: {str(e)}")
 
     @staticmethod
     def generate_explanation(
@@ -150,34 +111,11 @@ Examples:
             Explanation string (always grounded in actual result, never fabricated)
         """
         try:
-            prompt = f"""Generate a brief, friendly explanation of this action result.
-
-User asked: "{user_message}"
-Action performed: {action_performed}
-Result data: {json.dumps(action_result)}
-
-Explain the result in 1-2 sentences, referencing actual numbers/data from the result.
-Do NOT fabricate or exaggerate. Be factual."""
-
-            response = bedrock_client.invoke_model(
-                modelId=BEDROCK_MODEL_ID,
-                contentType="application/json",
-                accept="application/json",
-                body=json.dumps({"prompt": prompt, "max_tokens": 200}),
+            explanation = get_llm_provider().generate_explanation(
+                action_performed, action_result, user_message
             )
-
-            response_body = json.loads(response["body"].read())
-            
-            if "completion" in response_body:
-                text = response_body["completion"]
-            elif "content" in response_body:
-                text = response_body["content"][0]["text"] if response_body["content"] else ""
-            else:
-                text = str(response_body)
-
-            logger.info(f"Explanation generated: {text[:100]}...")
-            return text.strip()
-
+            logger.info(f"Explanation generated: {explanation[:100]}...")
+            return explanation
         except Exception as e:
             logger.error(f"Failed to generate explanation: {str(e)}")
             # Return a safe fallback based on action_result
@@ -186,54 +124,28 @@ Do NOT fabricate or exaggerate. Be factual."""
     @staticmethod
     def test_invocation() -> Dict:
         """
-        Test Bedrock invocation to verify configuration.
+        Test LLM invocation to verify provider is operational.
 
         Returns:
             Test result dict with status and details
         """
         try:
-            logger.info(f"Testing Bedrock invocation with model: {BEDROCK_MODEL_ID}")
+            logger.info(f"Testing LLM provider: {type(get_llm_provider()).__name__}")
             
-            test_prompt = "What is RoomieOps?"
-            response = bedrock_client.invoke_model(
-                modelId=BEDROCK_MODEL_ID,
-                contentType="application/json",
-                accept="application/json",
-                body=json.dumps({"prompt": test_prompt, "max_tokens": 100}),
+            test_result = get_llm_provider().detect_intent(
+                "What is RoomieOps?",
+                {}
             )
-
-            response_body = json.loads(response["body"].read())
             
             return {
                 "status": "success",
-                "model": BEDROCK_MODEL_ID,
-                "region": AWS_REGION,
-                "response_keys": list(response_body.keys()),
+                "provider": type(get_llm_provider()).__name__,
+                "intent_detected": test_result.intent,
             }
-
-        except ClientError as e:
-            error_code = e.response["Error"]["Code"]
-            if error_code == "AccessDenied":
-                return {
-                    "status": "blocked",
-                    "reason": "AccessDenied - AWS account does not have Bedrock access",
-                    "model": BEDROCK_MODEL_ID,
-                    "region": AWS_REGION,
-                    "error": str(e),
-                }
-            else:
-                return {
-                    "status": "error",
-                    "reason": error_code,
-                    "model": BEDROCK_MODEL_ID,
-                    "region": AWS_REGION,
-                    "error": str(e),
-                }
         except Exception as e:
+            logger.error(f"LLM provider test failed: {str(e)}")
             return {
                 "status": "error",
-                "reason": "Unexpected error",
-                "model": BEDROCK_MODEL_ID,
-                "region": AWS_REGION,
+                "provider": type(get_llm_provider()).__name__,
                 "error": str(e),
             }
