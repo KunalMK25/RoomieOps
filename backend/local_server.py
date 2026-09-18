@@ -337,12 +337,14 @@ Keep it under 200 words."""
 
 if __name__ == "__main__":
     print("=" * 80)
-    print("SPASHTA LOCAL DEVELOPMENT SERVER")
+    print("ROOMIEOPS LOCAL DEVELOPMENT SERVER")
     print("=" * 80)
     print("\nEndpoints:")
     print("  GET  /health                              - Health check")
-    print("  POST /api/v1/presigned-url                - Get S3 presigned URL")
-    print("  POST /api/v1/start-processing             - Start document processing")
-    print("  GET  /api/v1/document/<document_id>       - Get processing result")
+    print("  POST /api/v1/households                   - Household operations")
+    print("  POST /api/v1/expenses                     - Expense management")
+    print("  POST /api/v1/chores                       - Chore management")
+    print("  POST /api/v1/payments                     - Payment processing")
+    print("  POST /api/v1/copilot                      - AI agent requests")
     print("\nStarting server on http://localhost:5000\n")
     app.run(debug=True, host="0.0.0.0", port=5000)
