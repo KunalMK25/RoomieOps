@@ -1,102 +1,205 @@
-import { ProcessedDocument, Language } from '../types'
+/**
+ * RoomieOps API Client
+ * 
+ * Handles communication with backend Lambda functions for:
+ * - Household operations
+ * - Expense management
+ * - Chore tracking
+ * - Copilot requests
+ * - Payment processing
+ */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
-export const apiClient = {
-  async getPresignedUrl(docType: string): Promise<{ documentId: string; uploadUrl: string }> {
-    const response = await fetch(`${API_BASE_URL}/documents`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('authToken') || ''}`,
-      },
-      body: JSON.stringify({ docType }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to get upload URL: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  async startProcessing(
-    documentId: string,
-    situation: string,
-    language: Language = 'en'
-  ): Promise<{ status: string }> {
-    const response = await fetch(`${API_BASE_URL}/documents/${documentId}/process`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${localStorage.getItem('authToken') || ''}`,
-      },
-      body: JSON.stringify({ situation, language }),
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to start processing: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  async uploadDocument(
-    presignedUrl: string,
-    file: File
-  ): Promise<void> {
-    const response = await fetch(presignedUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': file.type,
-      },
-      body: file,
-    })
-
-    if (!response.ok) {
-      throw new Error(`Failed to upload document: ${response.statusText}`)
-    }
-  },
-
-  async getDocument(documentId: string): Promise<ProcessedDocument> {
-    const response = await fetch(`${API_BASE_URL}/documents/${documentId}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${localStorage.getItem('authToken') || ''}`,
-      },
-    })
-
-    if (response.status === 404) {
-      throw new Error('Document not found')
-    }
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch document: ${response.statusText}`)
-    }
-
-    return response.json()
-  },
-
-  async pollDocument(
-    documentId: string,
-    maxAttempts: number = 60,
-    intervalMs: number = 1000
-  ): Promise<ProcessedDocument> {
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        const doc = await this.getDocument(documentId)
-        if (doc.status === 'complete' || doc.status === 'failed') {
-          return doc
-        }
-      } catch (error) {
-        if (attempt === maxAttempts - 1) {
-          throw error
-        }
-      }
-
-      await new Promise((resolve) => setTimeout(resolve, intervalMs))
-    }
-
-    throw new Error('Processing timeout')
-  },
+interface ApiError {
+  code: string
+  message: string
 }
+
+interface ApiResponse<T> {
+  status: 'success' | 'error'
+  data?: T
+  error?: ApiError
+}
+
+class RoomieOpsApiClient {
+  private baseUrl: string
+  private token: string | null = null
+
+  constructor(baseUrl = API_BASE_URL) {
+    this.baseUrl = baseUrl
+  }
+
+  setToken(token: string) {
+    this.token = token
+  }
+
+  private getAuthHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    const token = this.token || localStorage.getItem('authToken')
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`
+    }
+    return headers
+  }
+
+  private async request<T>(
+    method: string,
+    path: string,
+    body?: any
+  ): Promise<T> {
+    const url = `${this.baseUrl}${path}`
+    const response = await fetch(url, {
+      method,
+      headers: this.getAuthHeaders(),
+      body: body ? JSON.stringify(body) : undefined,
+    })
+
+    if (!response.ok) {
+      const error = await response.json() as ApiError
+      throw new Error(`${error.code}: ${error.message}`)
+    }
+
+    const data = await response.json()
+    return data
+  }
+
+  // ===== Household Operations =====
+  async getHouseholdState(householdId: string): Promise<any> {
+    return this.request('POST', '/households', {
+      operation: 'get_household_state',
+      household_id: householdId,
+    })
+  }
+
+  async getMembers(householdId: string): Promise<any> {
+    return this.request('POST', '/households', {
+      operation: 'get_members',
+      household_id: householdId,
+    })
+  }
+
+  async getHouseholdPolicy(householdId: string): Promise<any> {
+    return this.request('POST', '/households', {
+      operation: 'get_policy',
+      household_id: householdId,
+    })
+  }
+
+  // ===== Expense Management =====
+  async createExpense(householdId: string, expenseData: any): Promise<any> {
+    return this.request('POST', '/expenses', {
+      operation: 'create',
+      household_id: householdId,
+      params: expenseData,
+    })
+  }
+
+  async getExpenses(householdId: string): Promise<any> {
+    return this.request('POST', '/expenses', {
+      operation: 'list',
+      household_id: householdId,
+    })
+  }
+
+  async calculateSplit(householdId: string, expenseId: string, method: string): Promise<any> {
+    return this.request('POST', '/expenses', {
+      operation: 'calculate_split',
+      household_id: householdId,
+      params: { expense_id: expenseId, method },
+    })
+  }
+
+  async getBalances(householdId: string): Promise<any> {
+    return this.request('POST', '/expenses', {
+      operation: 'get_balances',
+      household_id: householdId,
+    })
+  }
+
+  // ===== Chore Management =====
+  async getChoreRotation(householdId: string): Promise<any> {
+    return this.request('POST', '/chores', {
+      operation: 'get_rotation',
+      household_id: householdId,
+    })
+  }
+
+  async createChore(householdId: string, choreData: any): Promise<any> {
+    return this.request('POST', '/chores', {
+      operation: 'create',
+      household_id: householdId,
+      params: choreData,
+    })
+  }
+
+  async assignChore(householdId: string, choreId: string, memberId: string): Promise<any> {
+    return this.request('POST', '/chores', {
+      operation: 'assign',
+      household_id: householdId,
+      params: { chore_id: choreId, member_id: memberId },
+    })
+  }
+
+  async completeChore(householdId: string, choreId: string): Promise<any> {
+    return this.request('POST', '/chores', {
+      operation: 'complete',
+      household_id: householdId,
+      params: { chore_id: choreId },
+    })
+  }
+
+  async rebalanceChores(householdId: string): Promise<any> {
+    return this.request('POST', '/chores', {
+      operation: 'rebalance',
+      household_id: householdId,
+    })
+  }
+
+  // ===== Payment Processing =====
+  async recordPayment(householdId: string, paymentData: any): Promise<any> {
+    return this.request('POST', '/payments', {
+      operation: 'record',
+      household_id: householdId,
+      params: paymentData,
+    })
+  }
+
+  async getPaymentHistory(householdId: string): Promise<any> {
+    return this.request('POST', '/payments', {
+      operation: 'history',
+      household_id: householdId,
+    })
+  }
+
+  async simplifySettlement(householdId: string): Promise<any> {
+    return this.request('POST', '/payments', {
+      operation: 'simplify_settlement',
+      household_id: householdId,
+    })
+  }
+
+  // ===== Copilot (AI Agent) =====
+  async sendCopilotRequest(
+    householdId: string,
+    memberId: string,
+    request: string
+  ): Promise<any> {
+    return this.request('POST', '/copilot', {
+      household_id: householdId,
+      member_id: memberId,
+      request,
+    })
+  }
+
+  // ===== Notifications =====
+  async getNotifications(householdId: string): Promise<any> {
+    return this.request('POST', '/notifications', {
+      household_id: householdId,
+    })
+  }
+}
+
+export const apiClient = new RoomieOpsApiClient()

@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Spashta - Source-grounded decision support for regulations
+Description: RoomieOps - AI-powered Shared-Living Operations Copilot
 
 Parameters:
   Environment:
@@ -19,17 +19,17 @@ Globals:
     Environment:
       Variables:
         AWS_REGION: !Ref AWS::Region
-        DYNAMODB_TABLE: !Ref DocumentsTable
+        DYNAMODB_TABLE: !Ref HouseholdStateTable
         S3_BUCKET: !Ref DocumentsBucket
         BEDROCK_MODEL_ID: anthropic.claude-sonnet-4-5-20250929-v1:0
-        STATE_MACHINE_ARN: !Ref ProcessingStateMachine
+        STATE_MACHINE_ARN: !Ref EventWorkflowStateMachine
 
 Resources:
-  # S3 Bucket for document storage
+  # S3 Bucket for document storage (receipts, bills, invoices)
   DocumentsBucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Sub 'spashta-documents-${AWS::AccountId}-${AWS::Region}'
+      BucketName: !Sub 'roomieops-documents-${AWS::AccountId}-${AWS::Region}'
       VersioningConfiguration:
         Status: Enabled
       PublicAccessBlockConfiguration:
@@ -43,26 +43,30 @@ Resources:
             NoncurrentVersionExpirationInDays: 30
             Status: Enabled
 
-  # DynamoDB Table for document metadata and processing results
-  DocumentsTable:
+  # DynamoDB Table for household state (primary data store)
+  HouseholdStateTable:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: spashta-documents
+      TableName: roomieops-household-state
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - AttributeName: documentId
+        - AttributeName: pk
           AttributeType: S
-        - AttributeName: ownerId
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: householdId
           AttributeType: S
         - AttributeName: createdAt
           AttributeType: S
       KeySchema:
-        - AttributeName: documentId
+        - AttributeName: pk
           KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
       GlobalSecondaryIndexes:
-        - IndexName: OwnerIdCreatedAtIndex
+        - IndexName: HouseholdIdCreatedAtIndex
           KeySchema:
-            - AttributeName: ownerId
+            - AttributeName: householdId
               KeyType: HASH
             - AttributeName: createdAt
               KeyType: RANGE
@@ -72,7 +76,7 @@ Resources:
         StreamViewType: NEW_AND_OLD_IMAGES
       Tags:
         - Key: Application
-          Value: Spashta
+          Value: RoomieOps
 
   # IAM Role for Lambda functions
   LambdaExecutionRole:
@@ -98,11 +102,12 @@ Resources:
                   - dynamodb:PutItem
                   - dynamodb:UpdateItem
                   - dynamodb:Query
-                Resource: !GetAtt DocumentsTable.Arn
+                  - dynamodb:Scan
+                Resource: !GetAtt HouseholdStateTable.Arn
               - Effect: Allow
                 Action:
                   - dynamodb:Query
-                Resource: !Sub '${DocumentsTable.Arn}/index/*'
+                Resource: !Sub '${HouseholdStateTable.Arn}/index/*'
         - PolicyName: S3Access
           PolicyDocument:
             Version: '2012-10-17'
@@ -137,7 +142,7 @@ Resources:
   CognitoUserPool:
     Type: AWS::Cognito::UserPool
     Properties:
-      UserPoolName: Spashta
+      UserPoolName: RoomieOps
       Schema:
         - Name: email
           AttributeDataType: String
@@ -164,7 +169,7 @@ Resources:
     Type: AWS::Cognito::UserPoolClient
     Properties:
       UserPoolId: !Ref CognitoUserPool
-      ClientName: Spashta
+      ClientName: RoomieOps
       GenerateSecret: true
       AllowedOAuthFlows:
         - code
@@ -179,7 +184,7 @@ Resources:
         - ALLOW_REFRESH_TOKEN_AUTH
 
   # API Gateway
-  SpashtagestApi:
+  RoomieOpsApi:
     Type: AWS::Serverless::Api
     Properties:
       StageName: !Ref Environment
@@ -189,130 +194,44 @@ Resources:
           CognitoAuthorizer:
             UserPoolArn: !GetAtt CognitoUserPool.Arn
 
-  # Placeholder Lambda functions (to be implemented)
-  ExtractLambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: spashta-extract
-      CodeUri: ../backend/lambdas/extract/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
+  # Placeholder Lambda functions (to be implemented for RoomieOps)
+  # Domain-organized Lambda handlers will be added here
+  # - Copilot handler (AI agent orchestration)
+  # - Household management handlers
+  # - Expense/payment handlers
+  # - Chore management handlers
+  # - Member management handlers
+  # - Notification handlers
+  # - Document processing handlers (receipts/bills)
 
-  MatchSituationLambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: spashta-match-situation
-      CodeUri: ../backend/lambdas/match-situation/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
 
-  RiskClassifyLambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: spashta-risk-classify
-      CodeUri: ../backend/lambdas/risk-classify/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
-
-  ExplanationLambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: spashta-explanation
-      CodeUri: ../backend/lambdas/explanation/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
-
-  # API Lambda Functions for HTTP endpoints
-  PresignedUrlLambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: spashta-api-presigned-url
-      CodeUri: ../backend/lambdas/api-presigned-url/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Events:
-        CreatePresignedUrl:
-          Type: Api
-          Properties:
-            RestApiId: !Ref SpashtagestApi
-            Path: /documents
-            Method: post
-            Auth:
-              DefaultAuthorizer: CognitoAuthorizer
-
-  StartProcessingLambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: spashta-api-start-processing
-      CodeUri: ../backend/lambdas/api-start-processing/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Environment:
-        Variables:
-          STATE_MACHINE_ARN: !Ref ProcessingStateMachine
-      Events:
-        StartProcessing:
-          Type: Api
-          Properties:
-            RestApiId: !Ref SpashtagestApi
-            Path: /documents/{id}/process
-            Method: post
-            Auth:
-              DefaultAuthorizer: CognitoAuthorizer
-
-  GetDocumentLambda:
-    Type: AWS::Serverless::Function
-    Properties:
-      FunctionName: spashta-api-get-document
-      CodeUri: ../backend/lambdas/api-get-document/
-      Handler: app.lambda_handler
-      Runtime: python3.11
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Events:
-        GetDocument:
-          Type: Api
-          Properties:
-            RestApiId: !Ref SpashtagestApi
-            Path: /documents/{id}
-            Method: get
-            Auth:
-              DefaultAuthorizer: CognitoAuthorizer
-
-  # Step Functions State Machine
-  ProcessingStateMachine:
+  # Step Functions State Machine for event-driven workflows
+  EventWorkflowStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
-      Name: SpashtagestProcessingPipeline
+      Name: RoomieOpsEventWorkflow
       Type: STANDARD
       Policies:
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ExtractLambda
-        - LambdaInvokePolicy:
-            FunctionName: !Ref MatchSituationLambda
-        - LambdaInvokePolicy:
-            FunctionName: !Ref RiskClassifyLambda
-        - LambdaInvokePolicy:
-            FunctionName: !Ref ExplanationLambda
         - DynamoDBCrudPolicy:
-            TableName: !Ref DocumentsTable
+            TableName: !Ref HouseholdStateTable
       DefinitionUri: ../backend/stepfunctions/definition.yaml
+
+  # EventBridge Rule for scheduled household operations (optional)
+  # To be implemented for reminders, bill notifications, chore deadlines, etc.
 
 Outputs:
   ApiEndpoint:
     Description: API Gateway endpoint URL
-    Value: !Sub 'https://${SpashtagestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Value: !Sub 'https://${RoomieOpsApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
   CognitoUserPoolId:
     Description: Cognito User Pool ID
     Value: !Ref CognitoUserPool
-  DocumentsTableName:
-    Description: DynamoDB table for documents
-    Value: !Ref DocumentsTable
+  HouseholdStateTableName:
+    Description: DynamoDB table for household state
+    Value: !Ref HouseholdStateTable
   DocumentsBucketName:
     Description: S3 bucket for documents
     Value: !Ref DocumentsBucket
+  EventWorkflowStateMachineArn:
+    Description: Step Functions state machine ARN
+    Value: !Ref EventWorkflowStateMachine

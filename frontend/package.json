@@ -1,7 +1,7 @@
 {
-  "name": "spashta-frontend",
+  "name": "roomieops-frontend",
   "version": "0.1.0",
-  "description": "Spashta - Source-grounded decision support for rules",
+  "description": "RoomieOps - AI-powered Shared-Living Operations Copilot",
   "type": "module",
   "private": true,
   "scripts": {

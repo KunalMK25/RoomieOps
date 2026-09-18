@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  localstack:
+    image: localstack/localstack:latest
+    container_name: roomieops-localstack
+    ports:
+      - "4566:4566"  # LocalStack gateway
+      - "4571:4571"  # S3
+    environment:
+      - DEBUG=1
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - SERVICES=s3,dynamodb,lambda,apigateway,cognito-idp,stepfunctions,iam,logs
+      - AWS_DEFAULT_REGION=us-east-1
+      - AWS_ACCESS_KEY_ID=test
+      - AWS_SECRET_ACCESS_KEY=test
+    volumes:
+      - "${TMPDIR:-.}/.localstack:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+    networks:
+      - roomieops-network
+
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    container_name: roomieops-dynamodb
+    ports:
+      - "8000:8000"
+    command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /data"
+    volumes:
+      - "dynamodb-data:/data"
+    networks:
+      - roomieops-network
+
+  s3-local:
+    image: minio/minio:latest
+    container_name: roomieops-s3
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - "s3-data:/data"
+    networks:
+      - roomieops-network
+
+volumes:
+  dynamodb-data:
+  s3-data:
+
+networks:
+  roomieops-network:
+    driver: bridge
