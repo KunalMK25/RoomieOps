@@ -1,43 +1,58 @@
 """
-RoomieOps Authentication and Authorization Layer
+RoomieOps Authentication Layer
 
-- JWT extraction and validation from API Gateway Cognito authorizer
-- Identity normalization
-- Household membership verification
-- Role-based authorization
-- NEVER trust client-supplied userId as authoritative
+Abstracts user identity extraction and validation across execution modes:
+- SHIP_IT: JWT extraction from API Gateway Cognito authorizer
+- BUILD_IT: Local development identity
+- LOCAL_HEURISTIC: Mock identity for testing
+
+IMPORTANT: Cedar is NOT authentication. This layer only identifies the user.
+Authorization (Cedar) happens separately after identity is established.
+
+Refactored to use AuthProvider abstraction.
 """
 
 import logging
 from typing import Dict, Optional, List
-from dataclasses import dataclass
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-
-@dataclass
-class AuthenticatedUser:
-    """Normalized authenticated user identity."""
-    user_id: str  # Cognito sub claim
-    username: str
-    email: Optional[str] = None
-    groups: List[str] = None  # Cognito groups
-
-    def __post_init__(self):
-        if self.groups is None:
-            self.groups = []
+# Authentication provider (injected at runtime)
+_auth_provider = None
 
 
-def get_authenticated_user(event: Dict) -> Optional[AuthenticatedUser]:
+def set_auth_provider(provider):
+    """Set the authentication provider."""
+    global _auth_provider
+    _auth_provider = provider
+    logger.info(f"Auth layer provider set to: {type(provider).__name__}")
+
+
+def get_auth_provider():
+    """Get current authentication provider (initializes if needed)."""
+    global _auth_provider
+    if _auth_provider is None:
+        # Lazy initialization: detect provider based on environment
+        try:
+            from .providers import ExecutionModeManager
+            providers = ExecutionModeManager.get_providers()
+            _auth_provider = providers.auth
+            logger.info(f"Auth layer auto-initialized with: {type(_auth_provider).__name__}")
+        except Exception as e:
+            logger.error(f"Failed to auto-initialize auth provider: {e}")
+            raise
+    return _auth_provider
+
+
+def get_authenticated_user(event: Dict) -> Optional['AuthenticatedUser']:
     """
-    Extract and normalize authenticated user from API Gateway + Cognito authorizer.
+    Extract and normalize authenticated user from API event.
 
-    API Gateway with Cognito authorizer provides claims in:
-    event['requestContext']['authorizer']['claims']
+    Delegates to the configured authentication provider (Cognito, Local, etc.).
 
     Args:
-        event: Lambda event from API Gateway
+        event: API Gateway event (or equivalent)
 
     Returns:
         AuthenticatedUser if valid, None if unauthenticated/invalid
@@ -46,50 +61,23 @@ def get_authenticated_user(event: Dict) -> Optional[AuthenticatedUser]:
         ValueError: If authentication is missing (should trigger 401)
     """
     try:
-        # Cognito authorizer populates requestContext.authorizer.claims
-        authorizer = event.get("requestContext", {}).get("authorizer")
-        if not authorizer:
-            raise ValueError("No authorizer in request context")
-
-        claims = authorizer.get("claims")
-        if not claims:
-            raise ValueError("No claims in authorizer")
-
-        # Extract essential claims
-        user_id = claims.get("sub")  # Cognito subject (unique user ID)
-        username = claims.get("cognito:username")
-        email = claims.get("email")
-
-        if not user_id or not username:
-            raise ValueError("Missing required claims (sub, username)")
-
-        # Extract groups if present (from Cognito group membership)
-        groups = []
-        if "cognito:groups" in claims:
-            groups = claims.get("cognito:groups", "").split(",") if claims.get("cognito:groups") else []
-
-        logger.info(f"Authenticated user: {username} (sub={user_id})")
-
-        return AuthenticatedUser(
-            user_id=user_id,
-            username=username,
-            email=email,
-            groups=groups,
-        )
-
-    except (KeyError, ValueError, AttributeError) as e:
+        user = get_auth_provider().extract_user(event)
+        if user:
+            logger.info(f"Authenticated user: {user.username} (user_id={user.user_id})")
+        return user
+    except Exception as e:
         logger.warning(f"Authentication extraction failed: {str(e)}")
         return None
 
 
-def require_auth(event: Dict) -> AuthenticatedUser:
+def require_auth(event: Dict) -> 'AuthenticatedUser':
     """
     Require authentication, raising an exception if not present.
 
     Use this in handlers that must be authenticated.
 
     Args:
-        event: Lambda event
+        event: API event
 
     Returns:
         AuthenticatedUser
@@ -103,13 +91,13 @@ def require_auth(event: Dict) -> AuthenticatedUser:
     return user
 
 
-def is_admin(user: AuthenticatedUser) -> bool:
+def is_admin(user: 'AuthenticatedUser') -> bool:
     """Check if user has admin group membership."""
     return "admin" in (user.groups or [])
 
 
 def is_household_admin(
-    user: AuthenticatedUser,
+    user: 'AuthenticatedUser',
     household_id: str,
     members_map: Dict[str, Dict],  # {household_id: {user_id: member_record}}
 ) -> bool:
@@ -136,7 +124,7 @@ def is_household_admin(
 
 
 def verify_household_membership(
-    user: AuthenticatedUser,
+    user: 'AuthenticatedUser',
     household_id: str,
     members_list: List[Dict],  # [{user_id, role, ...}, ...]
 ) -> bool:
@@ -146,7 +134,7 @@ def verify_household_membership(
     Args:
         user: Authenticated user
         household_id: Household to verify
-        members_list: List of household members from DynamoDB
+        members_list: List of household members from storage
 
     Returns:
         True if user is in the household
@@ -158,7 +146,7 @@ def verify_household_membership(
 
 
 def verify_write_permission(
-    user: AuthenticatedUser,
+    user: 'AuthenticatedUser',
     household_id: str,
     members_list: List[Dict],
 ) -> bool:
@@ -180,7 +168,7 @@ def verify_write_permission(
 
 
 def verify_admin_permission(
-    user: AuthenticatedUser,
+    user: 'AuthenticatedUser',
     household_id: str,
     members_list: List[Dict],
 ) -> bool:
