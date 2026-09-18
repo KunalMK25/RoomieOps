@@ -1,78 +1,159 @@
-"""RoomieOps Chores - Create, assign, and manage chore rotations."""
+"""
+RoomieOps Chores Lambda Handler
+
+API Gateway routes:
+  POST   /households/{id}/chores           - Create chore
+  GET    /households/{id}/chores           - List chores
+  POST   /households/{id}/chores/{c_id}/complete - Complete chore (rotate)
+"""
+
 import json
-import logging
 import os
 import sys
+import logging
+import uuid
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, "/opt/python")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../shared"))
 
-import boto3
-
-from shared.utils import error_response, extract_user_id, log_event, success_response
+from dynamodb_ops import DynamoDBOps
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-dynamodb = boto3.resource("dynamodb")
-
 
 def lambda_handler(event, context):
+    """Main Lambda handler for chore operations."""
+    logger.info(f"Event: {json.dumps(event)}")
+
+    try:
+        method = event.get("httpMethod", "GET")
+        path = event.get("path", "")
+        body = event.get("body", "{}")
+
+        if isinstance(body, str):
+            body = json.loads(body) if body else {}
+
+        # Route handling
+        if method == "POST" and "/complete" in path:
+            household_id, chore_id = extract_ids(path, "/chores/", "/complete")
+            return complete_chore(household_id, chore_id)
+        elif method == "POST" and "/chores" in path and "/chores/" not in path:
+            household_id = extract_household_id(path)
+            return create_chore(household_id, body)
+        elif method == "GET" and "/chores" in path and "/chores/" not in path:
+            household_id = extract_household_id(path)
+            return list_chores(household_id)
+        else:
+            return error_response(404, f"Route not found: {method} {path}")
+
+    except Exception as e:
+        logger.error(f"Unhandled error: {str(e)}", exc_info=True)
+        return error_response(500, str(e))
+
+
+def create_chore(household_id, body):
     """
-    Chores Handler.
-
-    Manages chore operations:
-    - Get chore rotation
-    - Create chore
-    - Assign chore
-    - Complete chore
-    - Rebalance rotation
-
-    Request:
+    POST /households/{id}/chores
+    Create a chore with round-robin rotation.
+    
+    Request body:
     {
-        "operation": "get_rotation|create|assign|complete|rebalance",
-        "household_id": "h-001",
-        "params": {...}
+        "name": "Kitchen cleaning",
+        "rotation_order": ["user1", "user2", "user3"],
+        "frequency": "weekly"
     }
     """
     try:
-        log_event(event, context)
+        name = body.get("name")
+        rotation_order = body.get("rotation_order", [])
+        frequency = body.get("frequency", "weekly")
 
-        # Extract user ID
-        try:
-            user_id = extract_user_id(event)
-        except ValueError:
-            return error_response("Unauthorized", 401, "UNAUTHORIZED")
+        if not name or not rotation_order:
+            return error_response(400, "Missing: name, rotation_order")
 
-        # Extract body
-        try:
-            body = json.loads(event.get("body", "{}"))
-        except json.JSONDecodeError as e:
-            return error_response(f"Invalid request: {str(e)}", 400, "INVALID_REQUEST")
+        if len(rotation_order) < 2:
+            return error_response(400, "rotation_order must have at least 2 people")
 
-        operation = body.get("operation")
-        household_id = body.get("household_id")
+        chore_id = str(uuid.uuid4())
+        assigned_to = rotation_order[0]  # Start with first person
 
-        if not all([operation, household_id]):
-            return error_response("Missing required parameters", 400, "INVALID_REQUEST")
+        chore = DynamoDBOps.create_chore(
+            household_id=household_id,
+            chore_id=chore_id,
+            name=name,
+            assigned_to=assigned_to,
+            frequency=frequency,
+            rotation_order=rotation_order,
+        )
 
-        logger.info(f"Chore operation: {operation} for {household_id}")
-
-        # TODO: Implement chore operations
-        # - get_rotation: Get current rotation
-        # - create: Create new chore
-        # - assign: Assign to member
-        # - complete: Mark complete
-        # - rebalance: Rebalance based on absence/availability
-
-        response = {
-            "operation": operation,
-            "status": "success",
-            "data": {}
-        }
-
-        logger.info("Chore operation completed")
-        return success_response(response)
-
+        return success_response(201, chore)
     except Exception as e:
-        logger.error(f"Unexpected error in chores handler: {str(e)}")
-        return error_response("Internal server error", 500, "INTERNAL_ERROR")
+        logger.error(f"Error creating chore: {str(e)}")
+        return error_response(500, str(e))
+
+
+def list_chores(household_id):
+    """GET /households/{id}/chores - List all chores."""
+    try:
+        chores = DynamoDBOps.get_chores(household_id)
+        return success_response(200, {"chores": chores})
+    except Exception as e:
+        logger.error(f"Error listing chores: {str(e)}")
+        return error_response(500, str(e))
+
+
+def complete_chore(household_id, chore_id):
+    """
+    POST /households/{id}/chores/{c_id}/complete
+    Mark chore complete and rotate to next person in round-robin.
+    """
+    try:
+        chore = DynamoDBOps.complete_chore(household_id, chore_id)
+        return success_response(200, {
+            "message": f"Chore rotated to {chore['assigned_to']}",
+            "chore": chore,
+        })
+    except ValueError as e:
+        return error_response(400, str(e))
+    except Exception as e:
+        logger.error(f"Error completing chore: {str(e)}")
+        return error_response(500, str(e))
+
+
+def extract_household_id(path):
+    """Extract household ID from path."""
+    parts = path.split("/")
+    for i, part in enumerate(parts):
+        if part == "households" and i + 1 < len(parts):
+            return parts[i + 1]
+    raise ValueError("Could not extract household_id")
+
+
+def extract_ids(path, middle, suffix):
+    """Extract household_id and chore_id from /households/{id}/chores/{c_id}/complete"""
+    start_idx = path.find("/households/") + len("/households/")
+    end_idx = path.find(middle)
+    household_id = path[start_idx:end_idx]
+
+    chore_start = path.find(middle) + len(middle)
+    chore_end = path.find(suffix)
+    chore_id = path[chore_start:chore_end]
+
+    return household_id, chore_id
+
+
+def success_response(status_code, data):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(data),
+    }
+
+
+def error_response(status_code, message):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"error": message}),
+    }

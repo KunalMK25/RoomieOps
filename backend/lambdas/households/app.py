@@ -1,76 +1,196 @@
-"""RoomieOps Household Management - Create, update, and manage household state."""
+"""
+RoomieOps Households Lambda Handler
+
+API Gateway routes:
+  POST   /households                      - Create household
+  GET    /households/{id}                 - Get household details
+  GET    /households/{id}/members         - List members
+  POST   /households/{id}/members         - Add member
+  GET    /households/{id}/expenses        - List expenses
+  GET    /households/{id}/balances        - Get all balances
+  GET    /households/{id}/chores          - List chores
+"""
+
 import json
-import logging
 import os
 import sys
+import logging
+from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+# Add shared layer to path
+sys.path.insert(0, "/opt/python")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../shared"))
 
-import boto3
-
-from shared.utils import error_response, extract_user_id, log_event, success_response
+from dynamodb_ops import DynamoDBOps
+from finance_engine import FinanceEngine
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-dynamodb = boto3.resource("dynamodb")
-
 
 def lambda_handler(event, context):
-    """
-    Household Management Handler.
+    """Main Lambda handler for household operations."""
+    logger.info(f"Event: {json.dumps(event)}")
 
-    Manages household operations:
-    - Get household state
-    - Get household members
-    - Get household policy
-    - Update household settings
-
-    Request:
-    {
-        "operation": "get_household_state|get_members|get_policy|update_settings",
-        "household_id": "h-001",
-        "params": {...}
-    }
-    """
     try:
-        log_event(event, context)
+        # Extract HTTP method and path
+        method = event.get("httpMethod", "GET")
+        path = event.get("path", "")
+        body = event.get("body", "{}")
 
-        # Extract user ID
-        try:
-            user_id = extract_user_id(event)
-        except ValueError:
-            return error_response("Unauthorized", 401, "UNAUTHORIZED")
+        if isinstance(body, str):
+            body = json.loads(body) if body else {}
 
-        # Extract body
-        try:
-            body = json.loads(event.get("body", "{}"))
-        except json.JSONDecodeError as e:
-            return error_response(f"Invalid request: {str(e)}", 400, "INVALID_REQUEST")
-
-        operation = body.get("operation")
-        household_id = body.get("household_id")
-
-        if not all([operation, household_id]):
-            return error_response("Missing required parameters", 400, "INVALID_REQUEST")
-
-        logger.info(f"Household operation: {operation} for {household_id}")
-
-        # TODO: Implement household operations
-        # - get_household_state: Retrieve all state
-        # - get_members: List members
-        # - get_policy: Get household policies
-        # - update_settings: Update configuration
-
-        response = {
-            "operation": operation,
-            "status": "success",
-            "data": {}
-        }
-
-        logger.info("Household operation completed")
-        return success_response(response)
+        # Route handling
+        if method == "POST" and path == "/households":
+            return create_household(body)
+        elif method == "GET" and path.startswith("/households/") and path.endswith("/members"):
+            household_id = extract_id(path, "/households", "/members")
+            return get_members(household_id)
+        elif method == "POST" and path.startswith("/households/") and path.endswith("/members"):
+            household_id = extract_id(path, "/households", "/members")
+            return add_member(household_id, body)
+        elif method == "GET" and path.startswith("/households/") and path.endswith("/expenses"):
+            household_id = extract_id(path, "/households", "/expenses")
+            return get_expenses(household_id)
+        elif method == "GET" and path.startswith("/households/") and path.endswith("/balances"):
+            household_id = extract_id(path, "/households", "/balances")
+            return get_balances(household_id)
+        elif method == "GET" and path.startswith("/households/") and path.endswith("/chores"):
+            household_id = extract_id(path, "/households", "/chores")
+            return get_chores(household_id)
+        elif method == "GET" and path.startswith("/households/"):
+            household_id = path.split("/")[-1]
+            return get_household(household_id)
+        else:
+            return error_response(404, f"Route not found: {method} {path}")
 
     except Exception as e:
-        logger.error(f"Unexpected error in households handler: {str(e)}")
-        return error_response("Internal server error", 500, "INTERNAL_ERROR")
+        logger.error(f"Unhandled error: {str(e)}", exc_info=True)
+        return error_response(500, f"Internal server error: {str(e)}")
+
+
+def create_household(body):
+    """POST /households - Create new household."""
+    try:
+        name = body.get("name")
+        if not name:
+            return error_response(400, "Missing required field: name")
+
+        household_id = body.get("household_id") or datetime.utcnow().isoformat()
+        description = body.get("description", "")
+        policy = body.get("policy")
+
+        household = DynamoDBOps.create_household(
+            household_id=household_id,
+            name=name,
+            description=description,
+            policy=policy,
+        )
+
+        return success_response(201, household)
+    except Exception as e:
+        logger.error(f"Error creating household: {str(e)}")
+        return error_response(500, str(e))
+
+
+def get_household(household_id):
+    """GET /households/{id} - Get household details."""
+    try:
+        household = DynamoDBOps.get_household(household_id)
+        if not household:
+            return error_response(404, f"Household {household_id} not found")
+        return success_response(200, household)
+    except Exception as e:
+        logger.error(f"Error getting household: {str(e)}")
+        return error_response(500, str(e))
+
+
+def get_members(household_id):
+    """GET /households/{id}/members - List all members."""
+    try:
+        members = DynamoDBOps.get_members(household_id)
+        return success_response(200, {"members": members})
+    except Exception as e:
+        logger.error(f"Error getting members: {str(e)}")
+        return error_response(500, str(e))
+
+
+def add_member(household_id, body):
+    """POST /households/{id}/members - Add a member."""
+    try:
+        user_id = body.get("user_id")
+        name = body.get("name")
+        email = body.get("email", "")
+        role = body.get("role", "member")
+
+        if not user_id or not name:
+            return error_response(400, "Missing required fields: user_id, name")
+
+        member = DynamoDBOps.add_member(
+            household_id=household_id,
+            user_id=user_id,
+            name=name,
+            email=email,
+            role=role,
+        )
+
+        return success_response(201, member)
+    except Exception as e:
+        logger.error(f"Error adding member: {str(e)}")
+        return error_response(500, str(e))
+
+
+def get_expenses(household_id):
+    """GET /households/{id}/expenses - List expenses."""
+    try:
+        expenses = DynamoDBOps.get_expenses(household_id)
+        return success_response(200, {"expenses": expenses})
+    except Exception as e:
+        logger.error(f"Error getting expenses: {str(e)}")
+        return error_response(500, str(e))
+
+
+def get_balances(household_id):
+    """GET /households/{id}/balances - Get all balances."""
+    try:
+        balances = DynamoDBOps.get_all_balances(household_id)
+        return success_response(200, {"balances": balances})
+    except Exception as e:
+        logger.error(f"Error getting balances: {str(e)}")
+        return error_response(500, str(e))
+
+
+def get_chores(household_id):
+    """GET /households/{id}/chores - List chores."""
+    try:
+        chores = DynamoDBOps.get_chores(household_id)
+        return success_response(200, {"chores": chores})
+    except Exception as e:
+        logger.error(f"Error getting chores: {str(e)}")
+        return error_response(500, str(e))
+
+
+def extract_id(path, prefix, suffix):
+    """Extract ID from path like /households/{id}/members."""
+    start = len(prefix) + 1
+    end = len(path) - len(suffix)
+    return path[start:end]
+
+
+def success_response(status_code, data):
+    """Format successful response."""
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(data),
+    }
+
+
+def error_response(status_code, message):
+    """Format error response."""
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"error": message}),
+    }
