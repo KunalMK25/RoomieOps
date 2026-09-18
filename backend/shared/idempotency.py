@@ -16,18 +16,37 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, Optional
-import boto3
-from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE", "roomieops-household-state")
-dynamodb = boto3.resource("dynamodb")
-table = dynamodb.Table(DYNAMODB_TABLE)
-
 # Idempotency keys expire after 24 hours
 IDEMPOTENCY_TTL_SECONDS = 86400
+
+# Storage provider (injected at runtime)
+_storage_provider = None
+
+
+def set_storage_provider(provider):
+    """Set the storage provider for IdempotencyOps."""
+    global _storage_provider
+    _storage_provider = provider
+    logger.info(f"IdempotencyOps storage provider set to: {type(provider).__name__}")
+
+
+def get_storage_provider():
+    """Get current storage provider (initializes if needed)."""
+    global _storage_provider
+    if _storage_provider is None:
+        try:
+            from .providers import ExecutionModeManager
+            providers = ExecutionModeManager.get_providers()
+            _storage_provider = providers.storage
+            logger.info(f"IdempotencyOps auto-initialized with: {type(_storage_provider).__name__}")
+        except Exception as e:
+            logger.error(f"Failed to auto-initialize storage provider: {e}")
+            raise
+    return _storage_provider
 
 
 class IdempotencyError(Exception):
@@ -55,7 +74,7 @@ class IdempotencyOps:
             result: Result to cache
 
         Raises:
-            ClientError: If DynamoDB write fails
+            Exception: If storage write fails
         """
         if not request_id:
             logger.warning("No requestId provided, skipping idempotency storage")
@@ -71,13 +90,13 @@ class IdempotencyOps:
             "operation_type": operation_type,
             "result": result,
             "stored_at": datetime.utcnow().isoformat(),
-            "ttl": ttl,  # DynamoDB will auto-delete after TTL
+            "ttl": ttl,  # Storage provider will auto-delete after TTL
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             logger.info(f"Idempotency result stored: {request_id}")
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to store idempotency result: {e}")
             raise
 
@@ -100,18 +119,15 @@ class IdempotencyOps:
             return None
 
         try:
-            response = table.get_item(
-                Key={
-                    "pk": f"HOUSEHOLD#{household_id}",
-                    "sk": f"IDEMPOTENCY#{request_id}",
-                }
+            item = get_storage_provider().get_item(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk=f"IDEMPOTENCY#{request_id}"
             )
-            item = response.get("Item")
             if item:
                 logger.info(f"Idempotency hit: returning cached result for {request_id}")
                 return item.get("result")
             return None
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to check idempotency: {e}")
             raise
 

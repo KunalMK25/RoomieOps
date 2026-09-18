@@ -1,4 +1,16 @@
-"""Bedrock AI integration for reasoning pipeline."""
+"""
+DEPRECATED: Legacy Bedrock integration module.
+
+This module is maintained for backward compatibility only.
+New code should use bedrock_client.py which delegates to LLMProvider abstraction.
+
+The provider layer (backend/shared/providers/llm.py) handles:
+- SHIP_IT: BedrockLLMProvider
+- BUILD_IT: OllamaLLMProvider  
+- LOCAL_HEURISTIC: HeuristicLLMProvider
+
+This module will be removed in a future refactor.
+"""
 import json
 import logging
 from typing import Any, Dict
@@ -7,6 +19,10 @@ import boto3
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+logger.warning(
+    "bedrock.py is DEPRECATED. Use bedrock_client.py with provider abstraction instead."
+)
 
 bedrock = boto3.client("bedrock-runtime")
 
