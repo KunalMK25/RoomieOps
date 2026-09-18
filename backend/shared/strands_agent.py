@@ -29,7 +29,7 @@ except ImportError:
 
 from dynamodb_ops import DynamoDBOps
 from finance_engine import FinanceEngine
-from auth import AuthenticatedUser
+from providers.types import AuthenticatedUser
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
