@@ -1,28 +1,12 @@
 /**
  * RoomieOps API Client
  * 
- * Handles communication with backend Lambda functions for:
- * - Household operations
- * - Expense management
- * - Chore tracking
- * - Copilot requests
- * - Payment processing
+ * Handles communication with backend Lambda functions
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
 
-interface ApiError {
-  code: string
-  message: string
-}
-
-interface ApiResponse<T> {
-  status: 'success' | 'error'
-  data?: T
-  error?: ApiError
-}
-
-class RoomieOpsApiClient {
+export class RoomieOpsApiClient {
   private baseUrl: string
   private token: string | null = null
 
@@ -58,147 +42,70 @@ class RoomieOpsApiClient {
     })
 
     if (!response.ok) {
-      const error = await response.json() as ApiError
-      throw new Error(`${error.code}: ${error.message}`)
+      const error = await response.text()
+      throw new Error(`API error: ${response.status} ${error}`)
     }
 
-    const data = await response.json()
-    return data
+    return await response.json()
   }
 
-  // ===== Household Operations =====
-  async getHouseholdState(householdId: string): Promise<any> {
-    return this.request('POST', '/households', {
-      operation: 'get_household_state',
-      household_id: householdId,
+  async getBalances(householdId: string): Promise<any> {
+    return this.request('GET', `/households/${householdId}/balances`)
+  }
+
+  async getExpenses(householdId: string): Promise<any> {
+    return this.request('GET', `/households/${householdId}/expenses`)
+  }
+
+  async getChores(householdId: string): Promise<any> {
+    return this.request('GET', `/households/${householdId}/chores`)
+  }
+
+  async getMaintenanceIssues(householdId: string): Promise<any> {
+    return this.request('GET', `/households/${householdId}/maintenance`)
+  }
+
+  async getShoppingItems(householdId: string): Promise<any> {
+    return this.request('GET', `/households/${householdId}/shopping`)
+  }
+
+  async sendCopilotRequest(householdId: string, message: string): Promise<any> {
+    return this.request('POST', `/households/${householdId}/copilot`, {
+      message,
+    })
+  }
+
+  async confirmAction(householdId: string, actionId: string, confirmed: boolean): Promise<any> {
+    return this.request('POST', `/households/${householdId}/copilot/confirm`, {
+      action_id: actionId,
+      confirmed,
+    })
+  }
+
+  async createExpense(householdId: string, expenseData: any): Promise<any> {
+    return this.request('POST', `/households/${householdId}/expenses`, expenseData)
+  }
+
+  async createChore(householdId: string, choreData: any): Promise<any> {
+    return this.request('POST', `/households/${householdId}/chores`, choreData)
+  }
+
+  async createMaintenanceIssue(householdId: string, issueData: any): Promise<any> {
+    return this.request('POST', `/households/${householdId}/maintenance`, issueData)
+  }
+
+  async addShoppingItem(householdId: string, itemName: string): Promise<any> {
+    return this.request('POST', `/households/${householdId}/shopping`, {
+      item_name: itemName,
     })
   }
 
   async getMembers(householdId: string): Promise<any> {
-    return this.request('POST', '/households', {
-      operation: 'get_members',
-      household_id: householdId,
-    })
+    return this.request('GET', `/households/${householdId}/members`)
   }
 
-  async getHouseholdPolicy(householdId: string): Promise<any> {
-    return this.request('POST', '/households', {
-      operation: 'get_policy',
-      household_id: householdId,
-    })
-  }
-
-  // ===== Expense Management =====
-  async createExpense(householdId: string, expenseData: any): Promise<any> {
-    return this.request('POST', '/expenses', {
-      operation: 'create',
-      household_id: householdId,
-      params: expenseData,
-    })
-  }
-
-  async getExpenses(householdId: string): Promise<any> {
-    return this.request('POST', '/expenses', {
-      operation: 'list',
-      household_id: householdId,
-    })
-  }
-
-  async calculateSplit(householdId: string, expenseId: string, method: string): Promise<any> {
-    return this.request('POST', '/expenses', {
-      operation: 'calculate_split',
-      household_id: householdId,
-      params: { expense_id: expenseId, method },
-    })
-  }
-
-  async getBalances(householdId: string): Promise<any> {
-    return this.request('POST', '/expenses', {
-      operation: 'get_balances',
-      household_id: householdId,
-    })
-  }
-
-  // ===== Chore Management =====
-  async getChoreRotation(householdId: string): Promise<any> {
-    return this.request('POST', '/chores', {
-      operation: 'get_rotation',
-      household_id: householdId,
-    })
-  }
-
-  async createChore(householdId: string, choreData: any): Promise<any> {
-    return this.request('POST', '/chores', {
-      operation: 'create',
-      household_id: householdId,
-      params: choreData,
-    })
-  }
-
-  async assignChore(householdId: string, choreId: string, memberId: string): Promise<any> {
-    return this.request('POST', '/chores', {
-      operation: 'assign',
-      household_id: householdId,
-      params: { chore_id: choreId, member_id: memberId },
-    })
-  }
-
-  async completeChore(householdId: string, choreId: string): Promise<any> {
-    return this.request('POST', '/chores', {
-      operation: 'complete',
-      household_id: householdId,
-      params: { chore_id: choreId },
-    })
-  }
-
-  async rebalanceChores(householdId: string): Promise<any> {
-    return this.request('POST', '/chores', {
-      operation: 'rebalance',
-      household_id: householdId,
-    })
-  }
-
-  // ===== Payment Processing =====
-  async recordPayment(householdId: string, paymentData: any): Promise<any> {
-    return this.request('POST', '/payments', {
-      operation: 'record',
-      household_id: householdId,
-      params: paymentData,
-    })
-  }
-
-  async getPaymentHistory(householdId: string): Promise<any> {
-    return this.request('POST', '/payments', {
-      operation: 'history',
-      household_id: householdId,
-    })
-  }
-
-  async simplifySettlement(householdId: string): Promise<any> {
-    return this.request('POST', '/payments', {
-      operation: 'simplify_settlement',
-      household_id: householdId,
-    })
-  }
-
-  // ===== Copilot (AI Agent) =====
-  async sendCopilotRequest(
-    householdId: string,
-    memberId: string,
-    request: string
-  ): Promise<any> {
-    return this.request('POST', '/copilot', {
-      household_id: householdId,
-      member_id: memberId,
-      request,
-    })
-  }
-
-  // ===== Notifications =====
-  async getNotifications(householdId: string): Promise<any> {
-    return this.request('POST', '/notifications', {
-      household_id: householdId,
-    })
+  async getHouseholdState(householdId: string): Promise<any> {
+    return this.request('GET', `/households/${householdId}`)
   }
 }
 

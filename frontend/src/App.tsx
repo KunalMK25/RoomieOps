@@ -1,7 +1,10 @@
 import { useState } from 'react'
 import './App.css'
+import { Dashboard } from './screens/Dashboard'
+import { Copilot } from './screens/Copilot'
 
 function App() {
+  const [currentScreen, setCurrentScreen] = useState<string>('dashboard')
   const [authenticated, setAuthenticated] = useState(false)
 
   if (!authenticated) {
@@ -21,28 +24,55 @@ function App() {
   }
 
   return (
-    <div className="app-container">
+    <div className="app-container authenticated">
       <header>
         <h1>RoomieOps</h1>
         <nav>
-          <a href="#dashboard">Dashboard</a>
-          <a href="#copilot">Copilot</a>
-          <a href="#money">Money</a>
-          <a href="#chores">Chores</a>
-          <a href="#maintenance">Maintenance</a>
-          <a href="#shopping">Shopping</a>
-          <a href="#household">Household</a>
+          <button 
+            onClick={() => setCurrentScreen('dashboard')}
+            className={currentScreen === 'dashboard' ? 'active' : ''}
+          >
+            Dashboard
+          </button>
+          <button 
+            onClick={() => setCurrentScreen('copilot')}
+            className={currentScreen === 'copilot' ? 'active' : ''}
+          >
+            Copilot
+          </button>
+          <button 
+            onClick={() => setCurrentScreen('money')}
+            className={currentScreen === 'money' ? 'active' : ''}
+          >
+            Money
+          </button>
+          <button 
+            onClick={() => setCurrentScreen('chores')}
+            className={currentScreen === 'chores' ? 'active' : ''}
+          >
+            Chores
+          </button>
+          <button 
+            onClick={() => setCurrentScreen('maintenance')}
+            className={currentScreen === 'maintenance' ? 'active' : ''}
+          >
+            Maintenance
+          </button>
+          <button 
+            onClick={() => setCurrentScreen('shopping')}
+            className={currentScreen === 'shopping' ? 'active' : ''}
+          >
+            Shopping
+          </button>
         </nav>
       </header>
       <main>
-        <section id="dashboard">
-          <h2>Dashboard</h2>
-          <p>Placeholder: Dashboard showing amounts owed, bills due, tasks due</p>
-        </section>
-        <section id="copilot">
-          <h2>Ask RoomieOps</h2>
-          <p>Placeholder: Copilot chat interface for household queries</p>
-        </section>
+        {currentScreen === 'dashboard' && <Dashboard />}
+        {currentScreen === 'copilot' && <Copilot />}
+        {currentScreen === 'money' && <div className="screen"><h2>Money (placeholder)</h2></div>}
+        {currentScreen === 'chores' && <div className="screen"><h2>Chores (placeholder)</h2></div>}
+        {currentScreen === 'maintenance' && <div className="screen"><h2>Maintenance (placeholder)</h2></div>}
+        {currentScreen === 'shopping' && <div className="screen"><h2>Shopping (placeholder)</h2></div>}
       </main>
     </div>
   )
