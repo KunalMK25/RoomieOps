@@ -6,6 +6,13 @@ Schema (per spec §15):
   - pk/sk composite keys
   - Entities: HOUSEHOLD#<id>/META, MEMBER#<id>, ROOM#<id>, CHORE#<id>, EXPENSE#<id>, BALANCE#<id>, ISSUE#<id>, ITEM#<id>, AUDIT#<ts>#<id>
   - All writes include audit trail
+
+Refactored to use StorageProvider abstraction for BUILD_IT/SHIP_IT support.
+- DynamoDBOps is now a facade over StorageProvider
+- Calls get_storage_provider() to delegate all operations
+- SHIP_IT uses DynamoDBStorageProvider (via boto3)
+- BUILD_IT uses LocalStackStorageProvider (via boto3 with endpoint override)
+- Tests can inject InMemoryStorageProvider
 """
 
 import os
@@ -14,19 +21,44 @@ import logging
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
-import boto3
-from botocore.exceptions import ClientError
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-DYNAMODB_TABLE = os.environ.get("DYNAMODB_TABLE", "roomieops-household-state")
-dynamodb = boto3.resource("dynamodb")
-table = dynamodb.Table(DYNAMODB_TABLE)
+# Storage provider (injected at runtime)
+# Default: DynamoDBProvider, but can be LocalStackProvider or InMemoryProvider
+_storage_provider = None
+
+
+def set_storage_provider(provider):
+    """Set the storage provider for DynamoDBOps."""
+    global _storage_provider
+    _storage_provider = provider
+    logger.info(f"DynamoDBOps storage provider set to: {type(provider).__name__}")
+
+
+def get_storage_provider():
+    """Get current storage provider (initializes if needed)."""
+    global _storage_provider
+    if _storage_provider is None:
+        # Lazy initialization: detect provider based on environment
+        try:
+            from .providers import ExecutionModeManager
+            providers = ExecutionModeManager.get_providers()
+            _storage_provider = providers.storage
+            logger.info(f"DynamoDBOps auto-initialized with: {type(_storage_provider).__name__}")
+        except Exception as e:
+            logger.error(f"Failed to auto-initialize storage provider: {e}")
+            raise
+    return _storage_provider
 
 
 class DynamoDBOps:
-    """All DynamoDB operations for RoomieOps."""
+    """All DynamoDB operations for RoomieOps.
+    
+    This class is now a facade over StorageProvider abstraction.
+    All storage operations are delegated to get_storage_provider().
+    """
 
     # ==================== HOUSEHOLD CRUD ====================
 
@@ -60,12 +92,12 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             DynamoDBOps._audit_log(
                 "HOUSEHOLD_CREATE", household_id, {"household_id": household_id, "name": name}
             )
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to create household: {e}")
             raise
 
@@ -73,11 +105,11 @@ class DynamoDBOps:
     def get_household(household_id: str) -> Optional[Dict]:
         """Retrieve household metadata."""
         try:
-            response = table.get_item(
-                Key={"pk": f"HOUSEHOLD#{household_id}", "sk": "META"}
+            item = get_storage_provider().get_item(
+                pk=f"HOUSEHOLD#{household_id}", sk="META"
             )
-            return response.get("Item")
-        except ClientError as e:
+            return item
+        except Exception as e:
             logger.error(f"Failed to get household: {e}")
             raise
 
@@ -85,13 +117,14 @@ class DynamoDBOps:
     def list_households() -> List[Dict]:
         """List all active households."""
         try:
-            response = table.scan(
-                FilterExpression="sk = :sk AND #status = :status",
-                ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={":sk": "META", ":status": "active"},
-            )
-            return response.get("Items", [])
-        except ClientError as e:
+            result = get_storage_provider().scan(limit=1000)
+            # Filter for META items with active status (client-side filtering)
+            items = [
+                item for item in result.items 
+                if item.get("sk") == "META" and item.get("status") == "active"
+            ]
+            return items
+        except Exception as e:
             logger.error(f"Failed to list households: {e}")
             raise
 
@@ -115,14 +148,14 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             DynamoDBOps._audit_log(
                 "MEMBER_ADD",
                 household_id,
                 {"user_id": user_id, "name": name, "role": role},
             )
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to add member: {e}")
             raise
 
@@ -130,16 +163,12 @@ class DynamoDBOps:
     def get_members(household_id: str) -> List[Dict]:
         """Get all members of a household."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "MEMBER#",
-                },
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="MEMBER#"
             )
-            return response.get("Items", [])
-        except ClientError as e:
+            return result.items
+        except Exception as e:
             logger.error(f"Failed to get members: {e}")
             raise
 
@@ -178,7 +207,7 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             DynamoDBOps._audit_log(
                 "EXPENSE_CREATE",
                 household_id,
@@ -189,7 +218,7 @@ class DynamoDBOps:
                 },
             )
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to create expense: {e}")
             raise
 
@@ -197,18 +226,14 @@ class DynamoDBOps:
     def get_expenses(household_id: str, limit: int = 50) -> List[Dict]:
         """Get recent expenses for a household."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "EXPENSE#",
-                },
-                Limit=limit,
-                ScanIndexForward=False,  # Most recent first
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="EXPENSE#",
+                limit=limit
             )
-            return response.get("Items", [])
-        except ClientError as e:
+            # Return in reverse chronological order (most recent first)
+            return sorted(result.items, key=lambda x: x.get("created_at", ""), reverse=True)
+        except Exception as e:
             logger.error(f"Failed to get expenses: {e}")
             raise
 
@@ -232,9 +257,9 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to set balance: {e}")
             raise
 
@@ -242,11 +267,12 @@ class DynamoDBOps:
     def get_balance(household_id: str, user_id: str) -> Optional[Dict]:
         """Get current balance for a user."""
         try:
-            response = table.get_item(
-                Key={"pk": f"HOUSEHOLD#{household_id}", "sk": f"BALANCE#{user_id}"}
+            item = get_storage_provider().get_item(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk=f"BALANCE#{user_id}"
             )
-            return response.get("Item")
-        except ClientError as e:
+            return item
+        except Exception as e:
             logger.error(f"Failed to get balance: {e}")
             raise
 
@@ -254,16 +280,12 @@ class DynamoDBOps:
     def get_all_balances(household_id: str) -> List[Dict]:
         """Get all current balances for a household."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "BALANCE#",
-                },
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="BALANCE#"
             )
-            return response.get("Items", [])
-        except ClientError as e:
+            return result.items
+        except Exception as e:
             logger.error(f"Failed to get all balances: {e}")
             raise
 
@@ -296,14 +318,14 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             DynamoDBOps._audit_log(
                 "CHORE_CREATE",
                 household_id,
                 {"chore_id": chore_id, "assigned_to": assigned_to},
             )
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to create chore: {e}")
             raise
 
@@ -311,25 +333,22 @@ class DynamoDBOps:
     def get_chores(household_id: str) -> List[Dict]:
         """Get all chores for a household."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "CHORE#",
-                },
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="CHORE#"
             )
-            return response.get("Items", [])
-        except ClientError as e:
+            return result.items
+        except Exception as e:
             logger.error(f"Failed to get chores: {e}")
             raise
 
     @staticmethod
     def complete_chore(household_id: str, chore_id: str) -> Dict:
         """Mark a chore as completed and rotate to next person."""
-        chore = table.get_item(
-            Key={"pk": f"HOUSEHOLD#{household_id}", "sk": f"CHORE#{chore_id}"}
-        ).get("Item")
+        chore = get_storage_provider().get_item(
+            pk=f"HOUSEHOLD#{household_id}",
+            sk=f"CHORE#{chore_id}"
+        )
 
         if not chore:
             raise ValueError(f"Chore {chore_id} not found")
@@ -346,14 +365,14 @@ class DynamoDBOps:
         chore["last_completed_at"] = datetime.utcnow().isoformat()
 
         try:
-            table.put_item(Item=chore)
+            get_storage_provider().put_item(chore)
             DynamoDBOps._audit_log(
                 "CHORE_COMPLETE",
                 household_id,
                 {"chore_id": chore_id, "next_assigned": next_assigned},
             )
             return chore
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to complete chore: {e}")
             raise
 
@@ -374,26 +393,22 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=audit_item)
-        except ClientError as e:
+            get_storage_provider().put_item(audit_item)
+        except Exception as e:
             logger.warning(f"Failed to write audit log: {e}")
 
     @staticmethod
     def get_audit_log(household_id: str, limit: int = 100) -> List[Dict]:
         """Get audit log entries for a household."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "AUDIT#",
-                },
-                Limit=limit,
-                ScanIndexForward=False,
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="AUDIT#",
+                limit=limit
             )
-            return response.get("Items", [])
-        except ClientError as e:
+            # Return in reverse chronological order (most recent first)
+            return sorted(result.items, key=lambda x: x.get("timestamp", ""), reverse=True)
+        except Exception as e:
             logger.error(f"Failed to get audit log: {e}")
             raise
 
@@ -425,14 +440,14 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             DynamoDBOps._audit_log(
                 "MAINTENANCE_ISSUE_CREATE",
                 household_id,
                 {"issue_id": issue_id, "title": title, "location": location},
             )
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to create maintenance issue: {e}")
             raise
 
@@ -440,17 +455,12 @@ class DynamoDBOps:
     def get_open_maintenance_issues(household_id: str) -> List[Dict]:
         """Get open maintenance issues."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "ISSUE#",
-                },
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="ISSUE#"
             )
-            issues = response.get("Items", [])
-            return [i for i in issues if i.get("status") == "open"]
-        except ClientError as e:
+            return [i for i in result.items if i.get("status") == "open"]
+        except Exception as e:
             logger.error(f"Failed to get maintenance issues: {e}")
             raise
 
@@ -478,14 +488,14 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             DynamoDBOps._audit_log(
                 "SHOPPING_ITEM_ADD",
                 household_id,
                 {"item_name": item_name, "category": category},
             )
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to add shopping item: {e}")
             raise
 
@@ -493,17 +503,12 @@ class DynamoDBOps:
     def get_shopping_items(household_id: str) -> List[Dict]:
         """Get pending shopping items."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "SHOPPING#",
-                },
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="SHOPPING#"
             )
-            items = response.get("Items", [])
-            return [i for i in items if i.get("status") == "pending"]
-        except ClientError as e:
+            return [i for i in result.items if i.get("status") == "pending"]
+        except Exception as e:
             logger.error(f"Failed to get shopping items: {e}")
             raise
 
@@ -532,7 +537,7 @@ class DynamoDBOps:
         }
 
         try:
-            table.put_item(Item=item)
+            get_storage_provider().put_item(item)
             DynamoDBOps._audit_log(
                 "PAYMENT_RECORD",
                 household_id,
@@ -543,7 +548,7 @@ class DynamoDBOps:
                 },
             )
             return item
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to record payment: {e}")
             raise
 
@@ -555,9 +560,10 @@ class DynamoDBOps:
         request_id: str = "",
     ) -> Dict:
         """Reassign a chore to a different member."""
-        chore = table.get_item(
-            Key={"pk": f"HOUSEHOLD#{household_id}", "sk": f"CHORE#{chore_id}"}
-        ).get("Item")
+        chore = get_storage_provider().get_item(
+            pk=f"HOUSEHOLD#{household_id}",
+            sk=f"CHORE#{chore_id}"
+        )
 
         if not chore:
             raise ValueError(f"Chore {chore_id} not found")
@@ -566,14 +572,14 @@ class DynamoDBOps:
         chore["request_id"] = request_id
 
         try:
-            table.put_item(Item=chore)
+            get_storage_provider().put_item(chore)
             DynamoDBOps._audit_log(
                 "CHORE_REASSIGN",
                 household_id,
                 {"chore_id": chore_id, "new_assignee": assigned_to},
             )
             return chore
-        except ClientError as e:
+        except Exception as e:
             logger.error(f"Failed to reassign chore: {e}")
             raise
 
@@ -581,17 +587,12 @@ class DynamoDBOps:
     def get_audit_records(household_id: str, limit: int = 20) -> List[Dict]:
         """Get recent audit records."""
         try:
-            response = table.query(
-                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
-                ExpressionAttributeNames={"#sk": "sk"},
-                ExpressionAttributeValues={
-                    ":pk": f"HOUSEHOLD#{household_id}",
-                    ":sk_prefix": "AUDIT#",
-                },
-                Limit=limit,
-                ScanIndexForward=False,
+            result = get_storage_provider().query(
+                pk=f"HOUSEHOLD#{household_id}",
+                sk_prefix="AUDIT#",
+                limit=limit
             )
-            return response.get("Items", [])
-        except ClientError as e:
+            return sorted(result.items, key=lambda x: x.get("timestamp", ""), reverse=True)
+        except Exception as e:
             logger.error(f"Failed to get audit records: {e}")
             raise
