@@ -1,60 +1,85 @@
-"""RoomieOps Notifications - Send reminders and notifications to members."""
+"""
+RoomieOps Notifications Lambda Handler
+
+Handles event notifications, reminders, and alerts.
+P0: audit event logging
+P1: EventBridge-triggered reminders for bills/chores
+P2: SLA escalation
+"""
+
 import json
-import logging
 import os
 import sys
+import logging
+from datetime import datetime
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, "/opt/python")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../shared"))
 
-import boto3
-
-from shared.utils import error_response, log_event, success_response
+from dynamodb_ops import DynamoDBOps
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-dynamodb = boto3.resource("dynamodb")
-
 
 def lambda_handler(event, context):
-    """
-    Notifications Handler.
+    """Main Lambda handler for notification operations."""
+    logger.info(f"Event: {json.dumps(event)}")
 
-    Triggered by EventBridge or direct API calls.
-
-    Request:
-    {
-        "event_type": "bill_due|chore_due|payment_reminder|maintenance_escalation",
-        "household_id": "h-001",
-        "data": {...}
-    }
-    """
     try:
-        log_event(event, context)
-
-        event_type = event.get("event_type")
-        household_id = event.get("household_id")
-        data = event.get("data", {})
-
-        if not all([event_type, household_id]):
-            return error_response("Missing required parameters", 400, "INVALID_REQUEST")
-
-        logger.info(f"Notification event: {event_type} for {household_id}")
-
-        # TODO: Implement notification logic
-        # - bill_due: Send bill reminders
-        # - chore_due: Send chore deadlines
-        # - payment_reminder: Overdue payment reminders
-        # - maintenance_escalation: Escalate open issues
-
-        response = {
-            "event_type": event_type,
-            "status": "success",
-            "notification_sent": True
-        }
-
-        return success_response(response)
+        # Check if this is an EventBridge event or API request
+        if "source" in event and event.get("source") == "aws.events":
+            # EventBridge scheduled reminder
+            return handle_eventbridge_event(event)
+        else:
+            # Direct API call
+            return error_response(400, "Use EventBridge for notifications")
 
     except Exception as e:
-        logger.error(f"Unexpected error in notifications handler: {str(e)}")
-        return error_response("Internal server error", 500, "INTERNAL_ERROR")
+        logger.error(f"Unhandled error: {str(e)}", exc_info=True)
+        return error_response(500, str(e))
+
+
+def handle_eventbridge_event(event):
+    """Handle EventBridge scheduled reminders."""
+    detail = event.get("detail", {})
+    event_type = detail.get("event_type")
+
+    if event_type == "chore_reminder":
+        return handle_chore_reminder(detail)
+    elif event_type == "bill_due":
+        return handle_bill_reminder(detail)
+    else:
+        logger.warning(f"Unknown event type: {event_type}")
+        return {"status": "ignored"}
+
+
+def handle_chore_reminder(detail):
+    """Send chore completion reminder."""
+    household_id = detail.get("household_id")
+    chore_id = detail.get("chore_id")
+    assigned_to = detail.get("assigned_to")
+
+    logger.info(f"Chore reminder: {assigned_to} for chore {chore_id}")
+    # TODO: Send notification to user
+
+    return {"status": "reminder_sent"}
+
+
+def handle_bill_reminder(detail):
+    """Send bill due reminder."""
+    household_id = detail.get("household_id")
+    bill_amount = detail.get("amount_paise")
+
+    logger.info(f"Bill reminder for household {household_id}: ₹{bill_amount/100:.2f}")
+    # TODO: Send notification to admins
+
+    return {"status": "reminder_sent"}
+
+
+def error_response(status_code, message):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"error": message}),
+    }

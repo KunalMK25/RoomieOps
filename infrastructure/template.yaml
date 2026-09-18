@@ -303,6 +303,80 @@ Resources:
             Path: /households/{id}/chores/{choreId}/complete
             Method: POST
 
+  # Payments Handler (record, history)
+  PaymentsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: roomieops-payments
+      CodeUri: ../backend/lambdas/payments/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        RecordPayment:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/payments
+            Method: POST
+        GetPaymentHistory:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/payments/history
+            Method: GET
+
+  # Copilot Handler (AI agent orchestration)
+  CopilotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: roomieops-copilot
+      CodeUri: ../backend/lambdas/copilot/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 60
+      Events:
+        SendMessage:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/copilot
+            Method: POST
+        ConfirmAction:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/copilot/confirm
+            Method: POST
+
+  # Notifications Handler (reminders, alerts, EventBridge)
+  NotificationsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: roomieops-notifications
+      CodeUri: ../backend/lambdas/notifications/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        ChoreReminderRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.events
+              detail-type:
+                - Chore Reminder
+        BillDueRule:
+          Type: EventBridgeRule
+          Properties:
+            Pattern:
+              source:
+                - aws.events
+              detail-type:
+                - Bill Due
+
   # Step Functions State Machine for event-driven workflows
   ProcessingStateMachine:
     Type: AWS::Serverless::StateMachine

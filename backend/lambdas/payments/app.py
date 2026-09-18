@@ -1,71 +1,133 @@
-"""RoomieOps Payments - Record payments and settlement."""
+"""
+RoomieOps Payments Lambda Handler
+
+Handles payment recording and settlement operations.
+P0: record_payment, get_balance_history
+P2: settlement simplification algorithm
+"""
+
 import json
-import logging
 import os
 import sys
+import logging
+from datetime import datetime
+import uuid
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+sys.path.insert(0, "/opt/python")
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../shared"))
 
-import boto3
-
-from shared.utils import error_response, extract_user_id, log_event, success_response
+from dynamodb_ops import DynamoDBOps
+from auth import require_auth, verify_household_membership
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-dynamodb = boto3.resource("dynamodb")
-
 
 def lambda_handler(event, context):
+    """Main Lambda handler for payment operations."""
+    logger.info(f"Event: {json.dumps(event)}")
+
+    try:
+        user = require_auth(event)
+
+        method = event.get("httpMethod", "GET")
+        path = event.get("path", "")
+        body = event.get("body", "{}")
+
+        if isinstance(body, str):
+            body = json.loads(body) if body else {}
+
+        # Route handling
+        if method == "POST" and "/payments" in path and "/payments/" not in path:
+            household_id = extract_household_id(path)
+            return record_payment(user, household_id, body)
+        elif method == "GET" and "/payments/history" in path:
+            household_id = extract_household_id(path)
+            return get_payment_history(user, household_id)
+        else:
+            return error_response(404, f"Route not found: {method} {path}")
+
+    except ValueError as e:
+        if "Unauthenticated" in str(e):
+            return error_response(401, "Unauthenticated request")
+        return error_response(403, str(e))
+    except Exception as e:
+        logger.error(f"Unhandled error: {str(e)}", exc_info=True)
+        return error_response(500, str(e))
+
+
+def record_payment(user, household_id, body):
     """
-    Payments Handler.
-
-    Manages payment operations:
-    - Record payment
-    - Get payment history
-    - Simplify settlement
-
-    Request:
-    {
-        "operation": "record|history|simplify_settlement",
-        "household_id": "h-001",
-        "params": {...}
-    }
+    POST /households/{id}/payments
+    Record a payment between household members.
     """
     try:
-        log_event(event, context)
+        members = DynamoDBOps.get_members(household_id)
+        if not verify_household_membership(user, household_id, members):
+            return error_response(403, "Access denied")
 
-        try:
-            user_id = extract_user_id(event)
-        except ValueError:
-            return error_response("Unauthorized", 401, "UNAUTHORIZED")
+        from_user = body.get("from_user_id")
+        to_user = body.get("to_user_id")
+        amount_paise = body.get("amount_paise")
+        description = body.get("description", "Payment")
+        request_id = body.get("requestId")
 
-        try:
-            body = json.loads(event.get("body", "{}"))
-        except json.JSONDecodeError as e:
-            return error_response(f"Invalid request: {str(e)}", 400, "INVALID_REQUEST")
+        if not from_user or not to_user or not amount_paise:
+            return error_response(400, "Missing: from_user_id, to_user_id, amount_paise")
 
-        operation = body.get("operation")
-        household_id = body.get("household_id")
+        # TODO: Idempotency check
+        # TODO: Update balances
 
-        if not all([operation, household_id]):
-            return error_response("Missing required parameters", 400, "INVALID_REQUEST")
-
-        logger.info(f"Payment operation: {operation} for {household_id}")
-
-        # TODO: Implement payment operations with MONEY SAFETY
-        # - record: Record payment (integer paise, deterministic)
-        # - history: Get payment records
-        # - simplify_settlement: Calculate minimal settlement transactions
-
-        response = {
-            "operation": operation,
-            "status": "success",
-            "data": {}
+        payment_id = str(uuid.uuid4())
+        payment = {
+            "payment_id": payment_id,
+            "from_user_id": from_user,
+            "to_user_id": to_user,
+            "amount_paise": amount_paise,
+            "description": description,
+            "created_by": user.user_id,
+            "created_at": datetime.utcnow().isoformat(),
         }
 
-        return success_response(response)
-
+        return success_response(201, payment)
     except Exception as e:
-        logger.error(f"Unexpected error in payments handler: {str(e)}")
-        return error_response("Internal server error", 500, "INTERNAL_ERROR")
+        logger.error(f"Error recording payment: {str(e)}")
+        return error_response(500, str(e))
+
+
+def get_payment_history(user, household_id):
+    """GET /households/{id}/payments/history"""
+    try:
+        members = DynamoDBOps.get_members(household_id)
+        if not verify_household_membership(user, household_id, members):
+            return error_response(403, "Access denied")
+
+        # TODO: Query payments from DynamoDB
+        return success_response(200, {"payments": []})
+    except Exception as e:
+        logger.error(f"Error getting payment history: {str(e)}")
+        return error_response(500, str(e))
+
+
+def extract_household_id(path):
+    parts = path.split("/")
+    for i, part in enumerate(parts):
+        if part == "households" and i + 1 < len(parts):
+            return parts[i + 1]
+    raise ValueError("Could not extract household_id")
+
+
+def success_response(status_code, data):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(data),
+    }
+
+
+def error_response(status_code, message):
+    return {
+        "statusCode": status_code,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps({"error": message}),
+    }

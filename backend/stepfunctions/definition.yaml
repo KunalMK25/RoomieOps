@@ -1,10 +1,76 @@
-Comment: RoomieOps Event-Driven Workflow Orchestration
-StartAt: HandleEvent
+Comment: RoomieOps Expense Workflow - Validate → Calculate → Write → Audit
+StartAt: ValidateExpenseRequest
 States:
-  HandleEvent:
+  ValidateExpenseRequest:
+    Type: Task
+    Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:roomieops-expense-validator'
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: ValidationFailed
+    Next: CalculateSplit
+    ResultPath: $.validation_result
+    TimeoutSeconds: 30
+
+  ValidationFailed:
+    Type: Fail
+    Error: ValidationError
+    Cause: Invalid expense request
+
+  CalculateSplit:
+    Type: Task
+    Resource: arn:aws:states:::lambda:invoke
+    Parameters:
+      FunctionName: roomieops-split-calculator
+      Payload:
+        total_paise.$: $.amount_paise
+        split_method.$: $.split_method
+        participants.$: $.participants
+        split_params.$: $.split_params
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: CalculationFailed
+    Next: WriteExpense
+    ResultPath: $.calculation_result
+    TimeoutSeconds: 30
+
+  CalculationFailed:
+    Type: Fail
+    Error: CalculationError
+    Cause: Failed to calculate split
+
+  WriteExpense:
+    Type: Task
+    Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:roomieops-expense-writer'
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: WriteFailed
+    Next: WriteAuditLog
+    ResultPath: $.write_result
+    TimeoutSeconds: 30
+
+  WriteFailed:
+    Type: Fail
+    Error: WriteError
+    Cause: Failed to write expense to DynamoDB
+
+  WriteAuditLog:
+    Type: Task
+    Resource: !Sub 'arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:roomieops-audit-logger'
+    Catch:
+      - ErrorEquals:
+          - States.ALL
+        Next: AuditLogFailed
+    Next: ExpenseCreationSuccess
+    ResultPath: $.audit_result
+    TimeoutSeconds: 30
+
+  AuditLogFailed:
     Type: Pass
-    Comment: Placeholder for RoomieOps event handling
-    Result:
-      status: pending
-      message: Step Functions workflows to be implemented for RoomieOps
-    End: true
+    Comment: Audit log failure is non-blocking
+    Next: ExpenseCreationSuccess
+
+  ExpenseCreationSuccess:
+    Type: Succeed

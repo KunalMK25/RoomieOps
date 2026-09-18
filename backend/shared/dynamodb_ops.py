@@ -35,6 +35,7 @@ class DynamoDBOps:
         name: str,
         description: str = "",
         policy: Optional[Dict] = None,
+        created_by: Optional[str] = None,
     ) -> Dict:
         """Create a new household."""
         if not policy:
@@ -51,6 +52,7 @@ class DynamoDBOps:
             "name": name,
             "description": description,
             "policy": policy,
+            "created_by": created_by or "system",
             "created_at": datetime.utcnow().isoformat(),
             "updated_at": datetime.utcnow().isoformat(),
             "status": "active",
@@ -151,6 +153,7 @@ class DynamoDBOps:
         total_paise: int,
         allocations: List[Dict],  # [{"user_id": id, "amount_paise": amt}, ...]
         split_method: str = "equal",
+        created_by: Optional[str] = None,
     ) -> Dict:
         """
         Record an expense and its allocations.
@@ -168,6 +171,7 @@ class DynamoDBOps:
             "total_paise": total_paise,
             "allocations": allocations,
             "split_method": split_method,
+            "created_by": created_by or "system",
             "created_at": datetime.utcnow().isoformat(),
             "status": "settled",
         }
@@ -272,6 +276,7 @@ class DynamoDBOps:
         assigned_to: str,
         frequency: str = "weekly",
         rotation_order: Optional[List[str]] = None,
+        created_by: Optional[str] = None,
     ) -> Dict:
         """Create a chore."""
         item = {
@@ -284,6 +289,7 @@ class DynamoDBOps:
             "frequency": frequency,
             "rotation_order": rotation_order or [],
             "rotation_index": 0,
+            "created_by": created_by or "system",
             "created_at": datetime.utcnow().isoformat(),
             "status": "active",
         }
