@@ -6,6 +6,7 @@ AI-powered household coordination copilot using Strands Agent.
 - Tool selection and execution
 - Multi-step workflow support
 - Explanation generation
+- Confirmation flow management
 
 API routes:
   POST /households/{id}/copilot             - Send natural language request
@@ -26,9 +27,20 @@ from auth import require_auth, verify_household_membership, AuthenticatedUser
 from dynamodb_ops import DynamoDBOps
 from bedrock_client import BedrockOps, BedrockError
 from strands_agent import RoomieOpsAgent, ToolExecutionContext
+from confirmation import ConfirmationManager, ActionType
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+# Initialize confirmation manager with DynamoDB table
+try:
+    dynamodb = __import__("boto3").resource("dynamodb")
+    table_name = os.environ.get("DYNAMODB_TABLE", "roomieops-household-state")
+    table = dynamodb.Table(table_name)
+    ConfirmationManager.set_table(table)
+except Exception as e:
+    logger.warning(f"Failed to initialize ConfirmationManager: {e}")
+
 
 
 def lambda_handler(event, context):
@@ -124,12 +136,20 @@ def confirm_action(user: AuthenticatedUser, household_id: str, body: dict):
     """
     POST /households/{id}/copilot/confirm
     
-    Confirm a pending consequential action.
+    Confirm or reject a pending consequential action.
     
     Request:
     {
         "action_id": "...",
         "confirmed": true/false
+    }
+    
+    Response:
+    {
+        "status": "executed|rejected|failed",
+        "action_id": "...",
+        "result": {...} if executed,
+        "message": "..."
     }
     """
     try:
@@ -144,25 +164,31 @@ def confirm_action(user: AuthenticatedUser, household_id: str, body: dict):
         if not action_id:
             return error_response(400, "Missing: action_id")
 
-        logger.info(f"Action confirmation: {action_id}, confirmed={confirmed}")
+        logger.info(f"Confirmation request: action_id={action_id}, confirmed={confirmed}, user={user.user_id}")
 
-        # TODO: P1 — Retrieve pending action from cache
-        # TODO: P1 — Re-validate authorization
-        # TODO: P1 — Execute mutation if confirmed
-        # TODO: P1 — Create audit record
+        # Use ConfirmationManager to execute
+        result = ConfirmationManager.confirm_and_execute(
+            household_id=household_id,
+            action_id=action_id,
+            user_id=user.user_id,
+            confirmed=confirmed
+        )
 
-        response = {
+        if result.get("status") == "failed":
+            return error_response(400, result.get("error", "Confirmation failed"))
+        
+        return success_response(200, {
+            "status": result.get("status"),
             "action_id": action_id,
             "confirmed": confirmed,
-            "status": "confirmed" if confirmed else "rejected",
-            "message": "P1 feature — confirmation flow under development"
-        }
-
-        return success_response(200, response)
+            "result": result.get("result"),
+            "message": "Action executed" if result.get("status") == "executed" else "Action cancelled"
+        })
 
     except Exception as e:
-        logger.error(f"Error confirming action: {str(e)}")
+        logger.error(f"Error confirming action: {str(e)}", exc_info=True)
         return error_response(500, str(e))
+
 
 
 def extract_household_id(path: str) -> str:
