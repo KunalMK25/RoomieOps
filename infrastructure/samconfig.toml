@@ -1,0 +1,19 @@
+version = 0.1
+
+[default]
+[default.deploy]
+capabilities = "CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND"
+confirm_changeset = false
+region = "us-east-1"
+s3_bucket = "aws-sam-cli-managed-default-samclisourcebucket-"
+s3_prefix = "roomieops-p0"
+stack_name = "roomieops-p0"
+parameter_overrides = "Environment=prod"
+image_repositories = []
+
+[default.build]
+cached = true
+parallel = true
+
+[default.validate]
+region = "us-east-1"
