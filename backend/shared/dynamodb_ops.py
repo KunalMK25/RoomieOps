@@ -11,6 +11,7 @@ Schema (per spec §15):
 import os
 import json
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 import boto3
@@ -394,4 +395,203 @@ class DynamoDBOps:
             return response.get("Items", [])
         except ClientError as e:
             logger.error(f"Failed to get audit log: {e}")
+            raise
+
+    # ==================== MAINTENANCE ISSUES ====================
+
+    @staticmethod
+    def create_maintenance_issue(
+        household_id: str,
+        issue_id: str,
+        title: str,
+        description: str,
+        location: str,
+        reported_by: str,
+        request_id: str = "",
+    ) -> Dict:
+        """Create a maintenance issue."""
+        item = {
+            "pk": f"HOUSEHOLD#{household_id}",
+            "sk": f"ISSUE#{issue_id}",
+            "household_id": household_id,
+            "issue_id": issue_id,
+            "title": title,
+            "description": description,
+            "location": location,
+            "reported_by": reported_by,
+            "status": "open",
+            "created_at": datetime.utcnow().isoformat(),
+            "request_id": request_id,
+        }
+
+        try:
+            table.put_item(Item=item)
+            DynamoDBOps._audit_log(
+                "MAINTENANCE_ISSUE_CREATE",
+                household_id,
+                {"issue_id": issue_id, "title": title, "location": location},
+            )
+            return item
+        except ClientError as e:
+            logger.error(f"Failed to create maintenance issue: {e}")
+            raise
+
+    @staticmethod
+    def get_open_maintenance_issues(household_id: str) -> List[Dict]:
+        """Get open maintenance issues."""
+        try:
+            response = table.query(
+                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
+                ExpressionAttributeNames={"#sk": "sk"},
+                ExpressionAttributeValues={
+                    ":pk": f"HOUSEHOLD#{household_id}",
+                    ":sk_prefix": "ISSUE#",
+                },
+            )
+            issues = response.get("Items", [])
+            return [i for i in issues if i.get("status") == "open"]
+        except ClientError as e:
+            logger.error(f"Failed to get maintenance issues: {e}")
+            raise
+
+    # ==================== SHOPPING ITEMS ====================
+
+    @staticmethod
+    def add_shopping_item(
+        household_id: str,
+        item_id: str,
+        item_name: str,
+        category: str = "",
+        request_id: str = "",
+    ) -> Dict:
+        """Add item to shopping list."""
+        item = {
+            "pk": f"HOUSEHOLD#{household_id}",
+            "sk": f"SHOPPING#{item_id}",
+            "household_id": household_id,
+            "item_id": item_id,
+            "item_name": item_name,
+            "category": category,
+            "status": "pending",
+            "created_at": datetime.utcnow().isoformat(),
+            "request_id": request_id,
+        }
+
+        try:
+            table.put_item(Item=item)
+            DynamoDBOps._audit_log(
+                "SHOPPING_ITEM_ADD",
+                household_id,
+                {"item_name": item_name, "category": category},
+            )
+            return item
+        except ClientError as e:
+            logger.error(f"Failed to add shopping item: {e}")
+            raise
+
+    @staticmethod
+    def get_shopping_items(household_id: str) -> List[Dict]:
+        """Get pending shopping items."""
+        try:
+            response = table.query(
+                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
+                ExpressionAttributeNames={"#sk": "sk"},
+                ExpressionAttributeValues={
+                    ":pk": f"HOUSEHOLD#{household_id}",
+                    ":sk_prefix": "SHOPPING#",
+                },
+            )
+            items = response.get("Items", [])
+            return [i for i in items if i.get("status") == "pending"]
+        except ClientError as e:
+            logger.error(f"Failed to get shopping items: {e}")
+            raise
+
+    # ==================== ADDITIONAL HELPERS ====================
+
+    @staticmethod
+    def record_payment(
+        household_id: str,
+        from_user_id: str,
+        to_user_id: str,
+        amount_paise: int,
+        request_id: str = "",
+    ) -> Dict:
+        """Record a payment between members."""
+        payment_id = str(uuid.uuid4())[:8]
+        item = {
+            "pk": f"HOUSEHOLD#{household_id}",
+            "sk": f"PAYMENT#{payment_id}",
+            "household_id": household_id,
+            "payment_id": payment_id,
+            "from_user_id": from_user_id,
+            "to_user_id": to_user_id,
+            "amount_paise": amount_paise,
+            "created_at": datetime.utcnow().isoformat(),
+            "request_id": request_id,
+        }
+
+        try:
+            table.put_item(Item=item)
+            DynamoDBOps._audit_log(
+                "PAYMENT_RECORD",
+                household_id,
+                {
+                    "from": from_user_id,
+                    "to": to_user_id,
+                    "amount_paise": amount_paise,
+                },
+            )
+            return item
+        except ClientError as e:
+            logger.error(f"Failed to record payment: {e}")
+            raise
+
+    @staticmethod
+    def assign_chore(
+        household_id: str,
+        chore_id: str,
+        assigned_to: str,
+        request_id: str = "",
+    ) -> Dict:
+        """Reassign a chore to a different member."""
+        chore = table.get_item(
+            Key={"pk": f"HOUSEHOLD#{household_id}", "sk": f"CHORE#{chore_id}"}
+        ).get("Item")
+
+        if not chore:
+            raise ValueError(f"Chore {chore_id} not found")
+
+        chore["assigned_to"] = assigned_to
+        chore["request_id"] = request_id
+
+        try:
+            table.put_item(Item=chore)
+            DynamoDBOps._audit_log(
+                "CHORE_REASSIGN",
+                household_id,
+                {"chore_id": chore_id, "new_assignee": assigned_to},
+            )
+            return chore
+        except ClientError as e:
+            logger.error(f"Failed to reassign chore: {e}")
+            raise
+
+    @staticmethod
+    def get_audit_records(household_id: str, limit: int = 20) -> List[Dict]:
+        """Get recent audit records."""
+        try:
+            response = table.query(
+                KeyConditionExpression="pk = :pk AND begins_with(#sk, :sk_prefix)",
+                ExpressionAttributeNames={"#sk": "sk"},
+                ExpressionAttributeValues={
+                    ":pk": f"HOUSEHOLD#{household_id}",
+                    ":sk_prefix": "AUDIT#",
+                },
+                Limit=limit,
+                ScanIndexForward=False,
+            )
+            return response.get("Items", [])
+        except ClientError as e:
+            logger.error(f"Failed to get audit records: {e}")
             raise
