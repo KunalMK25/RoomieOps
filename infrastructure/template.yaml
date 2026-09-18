@@ -137,6 +137,14 @@ Resources:
                 Action:
                   - states:StartExecution
                 Resource: !GetAtt ProcessingStateMachine.Arn
+        - PolicyName: CognitoAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - cognito-idp:GetUser
+                Resource: !GetAtt CognitoUserPool.Arn
 
   # Cognito User Pool
   CognitoUserPool:
@@ -194,27 +202,149 @@ Resources:
           CognitoAuthorizer:
             UserPoolArn: !GetAtt CognitoUserPool.Arn
 
-  # Placeholder Lambda functions (to be implemented for RoomieOps)
-  # Domain-organized Lambda handlers will be added here
-  # - Copilot handler (AI agent orchestration)
-  # - Household management handlers
-  # - Expense/payment handlers
-  # - Chore management handlers
-  # - Member management handlers
-  # - Notification handlers
-  # - Document processing handlers (receipts/bills)
+  # P0 Lambda Functions
 
+  # Households Handler (CRUD for household/member operations)
+  HouseholdsFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: roomieops-households
+      CodeUri: ../backend/lambdas/households/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        CreateHousehold:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households
+            Method: POST
+        GetHousehold:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}
+            Method: GET
+        GetMembers:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/members
+            Method: GET
+        AddMember:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/members
+            Method: POST
+        GetExpenses:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/expenses
+            Method: GET
+        GetBalances:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/balances
+            Method: GET
+        GetChores:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/chores
+            Method: GET
+
+  # Expenses Handler (create, calculate split)
+  ExpensesFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: roomieops-expenses
+      CodeUri: ../backend/lambdas/expenses/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        CreateExpense:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/expenses
+            Method: POST
+        CalculateSplit:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/expenses/calculate
+            Method: POST
+
+  # Chores Handler (create, list, rotation)
+  ChoresFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: roomieops-chores
+      CodeUri: ../backend/lambdas/chores/
+      Handler: app.lambda_handler
+      Runtime: python3.11
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Events:
+        CreateChore:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/chores
+            Method: POST
+        CompleteChore:
+          Type: Api
+          Properties:
+            RestApiId: !Ref RoomieOpsApi
+            Path: /households/{id}/chores/{choreId}/complete
+            Method: POST
 
   # Step Functions State Machine for event-driven workflows
-  EventWorkflowStateMachine:
+  ProcessingStateMachine:
     Type: AWS::Serverless::StateMachine
     Properties:
       Name: RoomieOpsEventWorkflow
       Type: STANDARD
-      Policies:
-        - DynamoDBCrudPolicy:
-            TableName: !Ref HouseholdStateTable
+      Role: !GetAtt StepFunctionsExecutionRole.Arn
       DefinitionUri: ../backend/stepfunctions/definition.yaml
+
+  # IAM Role for Step Functions
+  StepFunctionsExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                Resource: !GetAtt HouseholdStateTable.Arn
+        - PolicyName: LambdaAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource:
+                  - !GetAtt HouseholdsFunction.Arn
+                  - !GetAtt ExpensesFunction.Arn
+                  - !GetAtt ChoresFunction.Arn
 
   # EventBridge Rule for scheduled household operations (optional)
   # To be implemented for reminders, bill notifications, chore deadlines, etc.
@@ -232,6 +362,15 @@ Outputs:
   DocumentsBucketName:
     Description: S3 bucket for documents
     Value: !Ref DocumentsBucket
-  EventWorkflowStateMachineArn:
+  ProcessingStateMachineArn:
     Description: Step Functions state machine ARN
-    Value: !Ref EventWorkflowStateMachine
+    Value: !Ref ProcessingStateMachine
+  HouseholdsFunctionArn:
+    Description: Households Lambda function ARN
+    Value: !GetAtt HouseholdsFunction.Arn
+  ExpensesFunctionArn:
+    Description: Expenses Lambda function ARN
+    Value: !GetAtt ExpensesFunction.Arn
+  ChoresFunctionArn:
+    Description: Chores Lambda function ARN
+    Value: !GetAtt ChoresFunction.Arn
