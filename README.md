@@ -1,257 +1,361 @@
-# RoomieOps — AI-Powered Shared-Living Operations Copilot
+# RoomieOps
 
-**Status:** Phase 4 Complete - Real Frontend ↔ Backend Integration Verified ✓  
-**Architecture:** Python (Lambda) + React/TypeScript (Vite) | DynamoDB | Cognito | Bedrock | Cedar Authorization  
-**Local Runtime:** Flask dev server (LOCAL_HEURISTIC mode, no Docker required) | Vite frontend (:5173)  
+## AI-Powered Shared-Living Operations Copilot
 
----
+RoomieOps is an AI-powered household coordination platform for shared living spaces—roommates, co-living communities, hostels, and shared apartments. It unifies shared expenses, chores, maintenance, and shopping into a single household state, with an AI copilot that understands natural language requests, orchestrates multi-step operations, and explains results.
 
-## Overview
-
-RoomieOps is an AI-powered household operations coordinator. Residents manage expenses, chores, maintenance, and shopping through natural language via the Copilot. The backend enforces a **deterministic architecture**: Cedar always makes authorization decisions, the Finance Engine handles all arithmetic, and the AI orchestrates only business logic—never mutations or financial calculations.
-
-**One household. One shared state. Cedar decides access. Finance Engine decides money.**
+**One household. One shared state. One copilot.**
 
 ---
 
-## Architecture & Phases
+## Why RoomieOps?
 
-### Phase 0-1: Complete ✓
-- Repository setup
-- Deterministic Finance Engine (equal/exact/percentage splits, balance calculation)
-- DynamoDB access layer with composite pk/sk schema
-- Bedrock/LLM provider abstraction (SHIP_IT/BUILD_IT/LOCAL_HEURISTIC modes)
+Shared living creates operational friction across multiple domains:
 
-### Phase 2: Conditionally Blocked / Validation Deferred ⚠️
-- **Proven:** Real Strands + llama3.2:3b + multi-tool execution + Cedar ALLOW/DENY
-- **Deferred:** Real LocalStack (:4566) runtime and final RoomieOps multi-tool E2E with LocalStack
-- **Blocker:** Docker/LocalStack unavailable in current environment
-- **Note:** Producer-consumer architecture, tool registration, and Cedar authorization all verified at smaller scale
+- **Expenses:** Who paid what? Who owes whom? How should costs split?
+- **Chores:** What needs doing? Who's assigned? Is it getting done?
+- **Maintenance:** What's broken? What's urgent? What's scheduled?
+- **Shopping:** What do we need? Who's buying it?
+- **Coordination:** How do these workflows interact?
 
-### Phase 3: Complete ✓
-- Frontend-backend API contract verified (7 routes, 9 methods)
-- React screens (Dashboard, Money, Chores, Copilot, Household, etc.)
-- Authentication flow (Bearer tokens)
-- Error handling and CORS configuration
+Existing tools handle one category at a time—expense apps for money, to-do lists for chores, spreadsheets for shopping. RoomieOps brings these workflows into one shared household state with an AI copilot capable of:
 
-### Phase 4: Complete ✓
-- **Flow A (Auth):** Bearer token extraction and handling ✓
-- **Flow B (Household):** State load and member list ✓
-- **Flow C (Money):** Expense creation, retrieval, balances ✓
-- **Flow D (Copilot):** Request submission and response ✓
-- **Flow E (Error):** Graceful handling of missing auth ✓
-- **10/10 integration tests passed**
-- Physical HTTP evidence: real frontend → real backend API calls
-- CORS enabled and verified
-- Authorization isolation: Bearer tokens create per-user context
-
-### Phase 5: Final Release Preparation (Current)
-- Repository audit and cleanup
-- Security audit
-- Frontend production build ✓
-- Backend validation ✓
-- AWS SAM template review
-- Deployment readiness assessment
-- Git finalization
+- Understanding household intent in natural language
+- Retrieving household state and context
+- Selecting and executing appropriate tools
+- Coordinating multi-step operations
+- Explaining results back to residents
 
 ---
 
-## Current Deployment Status
+## Key Features
 
-### 🟢 VERIFIED
-- **Frontend Build:** Production build succeeds, 166 KB JavaScript (gzipped 51 KB)
-- **Backend Python:** All shared modules compile, imports valid
-- **API Routes:** 10/10 routes tested and responding (households, expenses, members, copilot, balances, chores)
-- **Local Runtime:** Flask :5000 + Vite :5173 running and communicating
-- **Provider System:** ExecutionModeManager auto-detects mode; LOCAL_HEURISTIC works without Docker
-- **Integration Tests:** Phase 3 contract test passes; Phase 4 integration suite passes
-- **Cedar Authorization:** Verified in Phase 1C, architecture in place for production
-- **Finance Engine:** Unit-tested with deterministic split algorithms
+### 💰 Shared Expenses
 
-### 🟡 DEFERRED / EXTERNAL BLOCKER
-- **Phase 2 Final Gate:** Real LocalStack runtime (:4566) unavailable - requires Docker
-- **AWS Deployment:** SAM template valid but AWS account shows service/subscription restrictions
-- **Bedrock Real Invocation:** Mock responses configured as fallback; real Bedrock requires AWS credentials
-- **S3/Lambda/DynamoDB Subscription:** Restrictions prevent live AWS service invocation
-- **Cognito Real Integration:** Template configured but real pool requires AWS account validation
+- Create and categorize household expenses
+- Automatic and manual expense splits (equal, exact amount, percentage)
+- Real-time balance tracking (who owes whom)
+- Audit trail and expense history
 
-### 🔴 CODE DEFECTS
-- None found during Phase 5 audit
+### 🧹 Chores
+
+- Create household chores and tasks
+- Assign chores to residents
+- Track completion and rotation
+- Shared chore state across household
+
+### 🔧 Maintenance
+
+- Log and track maintenance issues
+- Organize by priority and status
+- Household maintenance visibility
+
+### 🛒 Shopping
+
+- Shared household shopping list
+- Add/remove items with ease
+- Coordination around household purchases
+
+### 🤖 AI Copilot
+
+- Natural-language household requests ("split rent equally", "who owes money?", "assign chores")
+- Tool selection and orchestration
+- Multi-step operation handling
+- Household state retrieval and context
+- Deterministic backend execution—AI orchestrates, backend validates and persists
 
 ---
 
-## Tech Stack
+## How It Works
 
-| Component | Technology | Status |
-|-----------|-----------|--------|
-| Frontend | React 18 + TypeScript + Vite | ✓ Production build |
-| Backend | Python 3.11 + Flask (local) / Lambda (AWS) | ✓ Deployed locally |
-| Database | DynamoDB (AWS) / In-Memory (local) | ✓ Schema defined |
-| Auth | Cognito + Bearer tokens | ✓ Local bearer auth, Cognito template ready |
-| AI/LLM | Bedrock + Strands SDK | ✓ Multi-tool in Phase 1; Bedrock fallback configured |
-| Authorization | Cedar (AWS) | ✓ Verified in Phase 1C |
-| Infrastructure | AWS SAM | ✓ Template valid, ready for deployment |
+```
+User Request (Natural Language)
+    ↓
+React Frontend (Browser)
+    ↓
+API Layer (Bearer Token Auth)
+    ↓
+Authentication
+    ↓
+Authorization (Cedar)
+    ↓
+Domain Services + Household State
+    ↓
+AI Copilot / Strands Agent Tool Execution
+    ↓
+Deterministic Backend Services
+    ↓
+Persistent Storage (DynamoDB / Local)
+```
+
+## Design Principle
+
+The AI copilot is responsible for:
+
+- Understanding user intent
+- Retrieving context and household state
+- Selecting appropriate tools
+- Orchestrating multi-step workflows
+- Explaining results
+
+The backend is responsible for:
+
+- Authentication
+- Authorization
+- Input validation
+- Deterministic arithmetic and calculations
+- Database mutations and consistency
+- Authoritative household state
+
+**AI orchestrates; the backend remains authoritative for trusted operations.** Financial calculations, authorization decisions, and data persistence never leave the backend.
 
 ---
 
-## Getting Started
+## Architecture
 
-### Local Development (No Docker Required)
+### Frontend
+
+- **React 18** with TypeScript
+- **Vite** for fast development and optimized production builds
+- **Component-based UI** for households, expenses, chores, copilot, shopping, maintenance
+- **API client** with Bearer token authentication
+
+### Backend
+
+- **Python 3.11** with Flask (local development)
+- **AWS Lambda** (production deployment architecture)
+- **Provider Abstraction Layer** for environment flexibility
+
+### AI & LLM
+
+- **Strands Agents** for tool selection and orchestration
+- **Ollama** (local, `llama3.2:3b`)
+- **AWS Bedrock** integration (production)
+
+### Authentication
+
+- Local authentication for development
+- Amazon Cognito for AWS deployment architecture
+
+### Authorization
+
+- **Cedar** (AWS authorization engine) for household-scoped access control
+- Server-side authorization before all protected operations
+- Fail-closed authorization behavior
+
+### Data
+
+- **DynamoDB** (AWS architecture)
+- **LocalStack** (local Docker simulation of AWS services)
+- **In-memory storage** (development/testing)
+
+### Infrastructure (AWS)
+
+- **API Gateway** (HTTP routing)
+- **Lambda** (serverless compute)
+- **DynamoDB** (data persistence)
+- **S3** (document storage)
+- **Cognito** (user identity)
+- **Bedrock** (managed LLM)
+- **Step Functions** (workflow orchestration)
+- **IAM** (role-based access control)
+
+---
+
+## Provider Architecture
+
+RoomieOps supports multiple execution modes via a provider abstraction layer. This allows the same application code to run locally and on AWS without modification:
+
+### LOCAL_HEURISTIC
+
+- In-memory storage
+- No external dependencies
+- Fastest for development and testing
+
+### BUILD_IT_STRANDS
+
+- Local Ollama (`llama3.2:3b`)
+- LocalStack for AWS-compatible local services
+- Strands Agents for tool orchestration
+- Intended for local Build It development and integration testing
+
+### SHIP_IT_BEDROCK
+
+- AWS Bedrock LLM
+- AWS DynamoDB
+- AWS Cognito
+- Full production deployment architecture
+
+The provider system ensures that application logic remains decoupled from infrastructure—allowing you to build and test locally, then deploy to AWS without code changes.
+
+---
+
+## Authorization & Security
+
+RoomieOps enforces household-scoped authorization at the backend level:
+
+- **User Authentication:** Bearer tokens from localStorage (local dev) or Cognito (production)
+- **Household Isolation:** Each user only sees households they are members of
+- **Operation Authorization:** Cedar makes authorization decisions before any state mutation
+- **Fail-Closed:** Denied operations return 403; authorization never defaults to allow
+- **Backend Authority:** Frontend cannot bypass backend authorization checks
+- **Secrets Management:** AWS credentials, API keys, and sensitive configuration supplied via environment variables (never committed to source)
+
+---
+
+## Project Structure
+
+```
+RoomieOps/
+├── frontend/                      # React + TypeScript + Vite
+│   ├── src/
+│   │   ├── api/                   # API client
+│   │   ├── screens/               # UI components
+│   │   └── types/                 # TypeScript types
+│   ├── package.json
+│   └── vite.config.ts
+├── backend/
+│   ├── shared/                    # Shared Python modules
+│   │   ├── finance_engine.py      # Deterministic expense calculations
+│   │   ├── dynamodb_ops.py        # DynamoDB operations
+│   │   ├── auth.py                # Authentication
+│   │   ├── providers/             # Provider abstraction (LLM, storage, auth, authorization)
+│   │   └── strands_agent.py       # Strands agent orchestration
+│   ├── lambdas/                   # AWS Lambda handlers
+│   │   ├── households/
+│   │   ├── expenses/
+│   │   ├── chores/
+│   │   ├── copilot/
+│   │   └── ...
+│   ├── cedar/                     # Cedar authorization policies
+│   ├── scripts/                   # Testing and utilities
+│   ├── local_dev_server.py        # Local Flask development server
+│   └── requirements-dev.txt
+├── infrastructure/
+│   └── template.yaml              # AWS SAM deployment template
+├── docker-compose.yml
+└── README.md
+```
+
+---
+
+## Running Locally
+
+### Prerequisites
+
+- **Python 3.11+** (backend)
+- **Node.js 18+** (frontend)
+- **npm**
+
+### Frontend
 
 ```bash
-# Backend (LOCAL_HEURISTIC mode - no Docker needed)
-cd backend
-python -m venv venv
-source venv/bin/activate  # or venv\Scripts\activate on Windows
-pip install -r requirements-dev.txt
-python local_dev_server.py
-# Server runs on http://localhost:5000
-
-# Frontend
 cd frontend
 npm install
 npm run dev
-# Frontend runs on http://localhost:5173
-
-# API client points to http://localhost:5000 automatically
-# Bearer token authentication: localStorage.getItem('authToken')
 ```
 
-### Testing
+The frontend runs on `http://localhost:5173`.
+
+### Backend
 
 ```bash
-# Phase 3: Frontend-Backend Contract Verification
+cd backend
+pip install -r requirements-dev.txt
+python local_dev_server.py
+```
+
+The backend runs on `http://localhost:5000`.
+
+### Configuration
+
+The backend auto-detects its execution mode:
+
+- **LOCAL_HEURISTIC** (default): Uses in-memory storage, no external dependencies
+- **BUILD_IT_STRANDS**: Requires `docker-compose up` (LocalStack + Ollama)
+- **SHIP_IT_BEDROCK**: Requires AWS credentials and active services
+
+Environment configuration via `.env` file (see `.env.example`):
+
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+---
+
+## Testing
+
+### Frontend Production Build
+
+```bash
+cd frontend
+npm run build
+```
+
+Verifies TypeScript compilation and Vite bundling. Output in `frontend/dist/`.
+
+### Backend Python Validation
+
+```bash
+cd backend
+python -m py_compile shared/*.py lambdas/*/*.py
+```
+
+Checks that the selected Python files compile successfully.
+
+### Integration Tests
+
+```bash
+# Frontend/backend contract verification (no external dependencies)
 python backend/scripts/test_phase3_frontend_backend_contract.py
 
-# Phase 4: Real Integration Test (requires both servers running)
+# Real HTTP integration (requires backend running on :5000)
 python backend/scripts/test_phase4_integration.py
 ```
 
-### Production Build
+---
 
-```bash
-# Frontend production build
-cd frontend
-npm run build
-# Output: frontend/dist/
+## Known Limitations
 
-# Backend deployment
-# SAM build and deploy handled by AWS deployment pipeline
-sam build
-sam deploy
-```
+- **AWS Deployment:** Requires an AWS account with active DynamoDB, Lambda, Bedrock, and Cognito services. Some AWS accounts may have service subscription restrictions.
+- **LocalStack Build It Mode:** Full end-to-end validation against LocalStack was not completed because Docker and LocalStack environment were unavailable during final testing. The provider architecture and multi-tool orchestration are verified locally, but comprehensive Build It runtime validation is pending Docker/LocalStack availability.
 
 ---
 
-## Deferred Validations & Known Limitations
+## Roadmap
 
-### Phase 2 - BUILD_IT_STRANDS Multi-Tool E2E
-- **Status:** DEFERRED - Requires Docker/LocalStack
-- **Evidence:** Strands + llama3.2:3b + multi-tool execution verified at smaller scale
-- **Blocker:** LocalStack (:4566) unavailable; Docker not running in environment
-- **Verification:** Phase 1 proves architecture works; Phase 2 final gates await LocalStack availability
+Future enhancements planned for RoomieOps:
 
-### AWS Deployment
-- **Status:** DEFERRED - AWS account service restrictions
-- **Evidence:** SAM template is valid, all Lambda/DynamoDB/Cognito resources properly defined
-- **Blocker:** Account shows S3, Lambda, DynamoDB subscription restrictions
-- **Risk Level:** Configuration-level, not code-level
-- **Fallback:** Local development fully functional without AWS
-
-### Real Bedrock Invocation
-- **Status:** DEFERRED - No AWS credentials in current environment
-- **Evidence:** Bedrock module gracefully handles missing credentials; mock responses implemented
-- **Fallback:** LOCAL_HEURISTIC + mock responses allow local development without AWS
+- Receipt extraction from images
+- Policy-aware household workflows
+- Absence handling and escalation
+- Rich notifications (SMS, push, email)
+- Advanced search and retrieval
+- Payment integration (UPI, Stripe)
+- Voice interaction
+- Multilingual support
+- Anomaly detection
+- Fairness-aware household coordination
+- Multi-property management
+- Household analytics
 
 ---
 
-## Security Review
+## Contributing
 
-✅ **Secrets:** No credentials committed (`.env` in `.gitignore`, `.env.example` has placeholders only)  
-✅ **Authorization:** Cedar remains authority; frontend cannot bypass backend authorization  
-✅ **Household Isolation:** Bearer tokens create per-user context; household IDs cannot be confused with participant IDs  
-✅ **Error Handling:** Errors fail closed; missing auth rejected, not silently granted  
-✅ **Debug Output:** No sensitive data in logs or console output
+We welcome contributions! Please feel free to open issues, submit pull requests, or suggest improvements.
 
 ---
 
-## Repository Cleanup
+## License
 
-- Deleted 20+ temporary diagnostic scripts from Phase 1-2
-- Deleted temporary phase status reports and analysis documents
-- Kept permanent tests: `test_phase3_frontend_backend_contract.py`, `test_phase4_integration.py`
-- Kept production code: All Lambda handlers, shared modules, provider system
-- Preserved deployment configuration: SAM template, docker-compose, infrastructure code
+License: Not yet specified.
 
 ---
 
-## Final Verification Checklist
+## Questions?
 
-✅ Frontend builds without errors  
-✅ Backend compiles and runs  
-✅ All 10 API routes tested and responding  
-✅ Phase 3 contract tests pass  
-✅ Phase 4 integration tests pass (10/10)  
-✅ Bearer token authentication working  
-✅ Cedar authorization schema in place  
-✅ Finance Engine deterministic and unit-tested  
-✅ No secrets committed  
-✅ Git status clean (staged for commit)  
+For questions or issues, open a GitHub issue or contact the maintainers.
 
----
-
-## Deployment Path
-
-### Current State: Locally Verified, Deployment Ready
-
-**To Deploy:**
-```bash
-# Requires AWS account with active subscriptions
-sam build
-sam deploy --guided
-```
-
-**Expected Issues:**
-- S3 subscription restriction: May block document bucket creation
-- Lambda subscription restriction: May block function deployment
-- DynamoDB subscription restriction: May block table creation
-- Bedrock invocation restriction: May block real model calls
-
-**Workaround:**
-All Phase 0-4 functionality verified locally without AWS. Local dev server sufficient for MVP development and testing.
-
----
-
-## Known Issues & Roadmap
-
-**Phase 2 Final Gates (Deferred):**
-- LocalStack runtime validation deferred (awaits Docker)
-- Final BUILD_IT_STRANDS multi-tool E2E deferred
-
-**Future (Post-MVP):**
-- P1: Fine-grained household resource permissions
-- P2: Document attachment + S3 integration
-- P3: EventBridge reminders + notifications
-- P4: Step Functions complete workflow automation
-- P5: Mobile app (React Native)
-
----
-
-## References
-
-- **Spec:** `ROOMIEOPS_BUILD_SPEC.md` (authoritative requirements)
-- **Execution:** `KIRO_MASTER_PROMPT.md` (AI development guidelines)
-- **Architecture:** `backend/shared/providers/` (provider abstraction layer)
-- **Finance Engine:** `backend/shared/finance_engine.py` (deterministic arithmetic)
-- **DynamoDB Schema:** `backend/shared/dynamodb_ops.py` (data layer)
-
-**Phase Status:**
-- Phase 0-1: ✓ Complete
-- Phase 2: ⚠️ Conditionally Blocked (LocalStack deferred)
-- Phase 3: ✓ Complete
-- Phase 4: ✓ Complete
-- Phase 5: ✓ Complete (Release Ready)
-
----
-
-**Final Verdict:** **PHASE 5 COMPLETE — RELEASE READY** (with noted AWS service dependency documentation)
+**Built with ❤️ for shared living.**
