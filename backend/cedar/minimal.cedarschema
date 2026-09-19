@@ -1,0 +1,7 @@
+entity User;
+entity Household;
+
+action read_household appliesTo {
+  principal: User,
+  resource: Household
+};

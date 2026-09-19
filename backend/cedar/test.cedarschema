@@ -1,0 +1,4 @@
+entity User;
+entity Household;
+action read_household;
+action create_expense;

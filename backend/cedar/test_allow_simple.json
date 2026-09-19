@@ -1,0 +1,6 @@
+{
+  "principal": "User::\"kunal\"",
+  "action": "read_household",
+  "resource": "Household::\"household-A\"",
+  "context": {}
+}

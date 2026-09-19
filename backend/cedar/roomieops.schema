@@ -1,0 +1,77 @@
+{
+  "commonTypes": {},
+  "entityTypes": {
+    "User": {
+      "memberOfTypes": ["Group"]
+    },
+    "Household": {
+      "memberOfTypes": []
+    },
+    "HouseholdMember": {
+      "memberOfTypes": ["Household"]
+    },
+    "Expense": {
+      "memberOfTypes": ["Household"]
+    },
+    "Chore": {
+      "memberOfTypes": ["Household"]
+    },
+    "MaintenanceIssue": {
+      "memberOfTypes": ["Household"]
+    },
+    "ShoppingItem": {
+      "memberOfTypes": ["Household"]
+    },
+    "Group": {}
+  },
+  "actions": {
+    "read_household": {
+      "appliesTo": {
+        "resourceTypes": ["Household"],
+        "principalTypes": ["User"]
+      }
+    },
+    "create_expense": {
+      "appliesTo": {
+        "resourceTypes": ["Household"],
+        "principalTypes": ["User"]
+      }
+    },
+    "update_expense": {
+      "appliesTo": {
+        "resourceTypes": ["Expense"],
+        "principalTypes": ["User"]
+      }
+    },
+    "delete_expense": {
+      "appliesTo": {
+        "resourceTypes": ["Expense"],
+        "principalTypes": ["User"]
+      }
+    },
+    "create_chore": {
+      "appliesTo": {
+        "resourceTypes": ["Household"],
+        "principalTypes": ["User"]
+      }
+    },
+    "create_maintenance": {
+      "appliesTo": {
+        "resourceTypes": ["Household"],
+        "principalTypes": ["User"]
+      }
+    },
+    "create_shopping_item": {
+      "appliesTo": {
+        "resourceTypes": ["Household"],
+        "principalTypes": ["User"]
+      }
+    },
+    "read_expense": {
+      "appliesTo": {
+        "resourceTypes": ["Expense"],
+        "principalTypes": ["User"]
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "principal": {
+    "type": "User",
+    "id": "kunal"
+  },
+  "action": {
+    "name": "write"
+  },
+  "resource": {
+    "type": "Household",
+    "id": "hh-b"
+  },
+  "context": {}
+}

@@ -18,21 +18,28 @@ The agent NEVER:
 
 import json
 import logging
+import time
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass, asdict
 
-try:
-    from strands.agent import Agent, Tool, ToolResult
-    STRANDS_AVAILABLE = True
-except ImportError:
-    STRANDS_AVAILABLE = False
-
-from dynamodb_ops import DynamoDBOps
-from finance_engine import FinanceEngine
-from providers.types import AuthenticatedUser
-
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
+
+try:
+    from strands import Agent, tool
+    from strands.models.ollama import OllamaModel
+    STRANDS_AVAILABLE = True
+except ImportError as e:
+    logger.warning(f"Strands import error: {e}")
+    STRANDS_AVAILABLE = False
+except Exception as e:
+    logger.warning(f"Unexpected Strands error: {e}")
+    STRANDS_AVAILABLE = False
+
+from .dynamodb_ops import DynamoDBOps
+from .finance_engine import FinanceEngine
+from .providers.types import AuthenticatedUser
+from .providers.manager import ExecutionModeManager, ExecutionMode
 
 
 @dataclass
@@ -59,12 +66,52 @@ class RoomieOpsAgent:
         self.agent = None
         self.tools_registry = self._build_tool_registry()
         
+        # Get authorization provider from current execution mode
+        self.authz_provider = None
+        try:
+            providers = ExecutionModeManager.get_cached_providers()
+            if providers:
+                self.authz_provider = providers.authorization
+                logger.info(f"Authorization provider initialized: {type(self.authz_provider).__name__}")
+        except Exception as e:
+            logger.warning(f"Failed to get authorization provider: {e}")
+        
         if STRANDS_AVAILABLE:
             try:
                 self.agent = self._initialize_strands_agent()
             except Exception as e:
                 logger.warning(f"Strands initialization failed: {e}. Falling back to heuristic mode.")
                 self.agent = None
+    
+    def _check_authorization(self, action: str, resource: str) -> tuple[bool, str]:
+        """Check authorization for an action on a resource using real Cedar.
+        
+        Args:
+            action: Action name (e.g., 'create_expense', 'create_chore')
+            resource: Resource identifier (e.g., 'household:household-id')
+            
+        Returns:
+            (permitted: bool, reason: str)
+        """
+        if not self.authz_provider:
+            logger.warning("No authorization provider available; allowing action")
+            return True, "No authorization provider configured"
+        
+        try:
+            result = self.authz_provider.check_permission(
+                user=self.context.user,
+                action=action,
+                resource=resource
+            )
+            if result.permitted:
+                logger.info(f"✓ Cedar ALLOW: {self.context.user.user_id} {action} {resource}")
+            else:
+                logger.warning(f"✗ Cedar DENY: {self.context.user.user_id} {action} {resource} ({result.reason})")
+            return result.permitted, result.reason
+        except Exception as e:
+            logger.error(f"Authorization check error: {e}")
+            # Fail closed
+            return False, f"Authorization check failed: {e}"
     
     def _build_tool_registry(self) -> Dict[str, Any]:
         """Build the complete tool registry for the agent."""
@@ -235,28 +282,225 @@ class RoomieOpsAgent:
         }
     
     def _initialize_strands_agent(self):
-        """Initialize Strands Agent with tools."""
+        """Initialize Strands Agent with tools using Strands 1.56.0 API."""
         if not STRANDS_AVAILABLE:
             return None
         
         try:
-            tools = []
-            for tool_name, tool_def in self.tools_registry.items():
-                tool = Tool(
-                    name=tool_name,
-                    description=tool_def["description"],
-                    input_schema=tool_def["input_schema"],
-                )
-                tools.append(tool)
+            # Get Ollama model configuration
+            providers = ExecutionModeManager.get_cached_providers()
+            if not providers or not providers.llm:
+                logger.error("No LLM provider available")
+                return None
             
-            agent = Agent(
-                tools=tools,
-                system_prompt=self._get_system_prompt(),
+            # Create OllamaModel with configured endpoint and model
+            if not hasattr(providers.llm, 'endpoint') or not hasattr(providers.llm, 'model'):
+                logger.error("LLM provider missing endpoint or model")
+                return None
+            
+            model = OllamaModel(
+                host=providers.llm.endpoint,
+                model_id=providers.llm.model
             )
-            logger.info(f"Strands Agent initialized with {len(tools)} tools")
+            logger.info(f"OllamaModel configured: {providers.llm.model} at {providers.llm.endpoint}")
+            
+            # Create agent WITHOUT subclass - use a regular Agent with tools passed as parameter
+            # Create tool wrappers that Strands can invoke
+            roomie_ops_agent = self
+            
+            class RoomieOpsStrandsAgent(Agent):
+                """Dynamic Strands Agent with RoomieOps tools."""
+                
+                @tool
+                def get_household_state(self) -> Dict:
+                    """Retrieve current household state."""
+                    return roomie_ops_agent.get_household_state()
+                
+                @tool
+                def get_household_policy(self) -> Dict:
+                    """Get household expense split policy."""
+                    return roomie_ops_agent.get_household_policy()
+                
+                @tool
+                def get_member(self, user_id: str) -> Dict:
+                    """Get member information by user_id."""
+                    return roomie_ops_agent.get_member(user_id=user_id)
+                
+                @tool
+                def get_expenses(self, limit: int = 10) -> Dict:
+                    """List recent household expenses."""
+                    return roomie_ops_agent.get_expenses(limit=limit)
+                
+                @tool
+                def get_balances(self) -> Dict:
+                    """Get current balances for all members."""
+                    return roomie_ops_agent.get_balances()
+                
+                @tool
+                def create_expense(self, amount_paise: int = None, category: str = None, description: str = "", 
+                                  split_method: str = "equal", amount: int = None, participant_ids = None, **kwargs) -> Dict:
+                    """Create a shared expense and calculate split.
+                    
+                    Record an expense that will be split among household members.
+                    """
+                    import json
+                    with open("tool_calls.log", "a", encoding="utf-8") as f:
+                        f.write(f"[STRANDS TOOL INVOCATION] create_expense\n")
+                        f.write(f"  amount_paise={amount_paise} (type: {type(amount_paise).__name__})\n")
+                        f.write(f"  category={category} (type: {type(category).__name__})\n")
+                        f.write(f"  participant_ids={participant_ids} (type: {type(participant_ids).__name__})\n")
+                    
+                    final_amount = amount_paise or amount
+                    if final_amount is None:
+                        return {"status": "error", "message": "amount_paise or amount required"}
+                    
+                    # Handle participant_ids flexibly - could be None, string, list, or malformed
+                    if participant_ids is None or participant_ids == "" or participant_ids == "[]":
+                        household_state = roomie_ops_agent.get_household_state()
+                        if 'members' in household_state:
+                            participant_ids = [m['user_id'] for m in household_state['members']]
+                        else:
+                            participant_ids = []
+                    elif isinstance(participant_ids, str):
+                        # Model may pass string
+                        if participant_ids.startswith('['):
+                            # JSON array string
+                            try:
+                                participant_ids = json.loads(participant_ids)
+                            except:
+                                participant_ids = []
+                        else:
+                            # Single ID string or household ID - use all members
+                            household_state = roomie_ops_agent.get_household_state()
+                            if 'members' in household_state:
+                                participant_ids = [m['user_id'] for m in household_state['members']]
+                            else:
+                                participant_ids = []
+                    elif not isinstance(participant_ids, list):
+                        # Convert to list if not already
+                        try:
+                            participant_ids = list(participant_ids)
+                        except:
+                            household_state = roomie_ops_agent.get_household_state()
+                            if 'members' in household_state:
+                                participant_ids = [m['user_id'] for m in household_state['members']]
+                            else:
+                                participant_ids = []
+                    
+                    result = roomie_ops_agent.create_expense(
+                        amount_paise=final_amount,
+                        category=category or "groceries",
+                        participant_ids=participant_ids or [],
+                        description=description,
+                        split_method=split_method
+                    )
+                    with open("tool_calls.log", "a", encoding="utf-8") as f:
+                        f.write(f"  -> result: {result}\n")
+                    return result
+                
+                @tool
+                def record_payment(self, from_user_id: str, to_user_id: str, amount_paise: int) -> Dict:
+                    """Record a payment between members."""
+                    return roomie_ops_agent.record_payment(
+                        from_user_id=from_user_id,
+                        to_user_id=to_user_id,
+                        amount_paise=amount_paise
+                    )
+                
+                @tool
+                def get_chore_rotation(self) -> Dict:
+                    """Get current chore rotation and assignments."""
+                    return roomie_ops_agent.get_chore_rotation()
+                
+                @tool
+                def create_chore(self, title: str, assigned_to: str, due_date: str = "", recurring: bool = False) -> Dict:
+                    """Create a new chore."""
+                    return roomie_ops_agent.create_chore(
+                        title=title,
+                        assigned_to=assigned_to,
+                        due_date=due_date,
+                        recurring=recurring
+                    )
+                
+                @tool
+                def complete_chore(self, chore_id: str) -> Dict:
+                    """Mark a chore as completed."""
+                    return roomie_ops_agent.complete_chore(chore_id=chore_id)
+                
+                @tool
+                def assign_chore(self, chore_id: str, new_assignee_id: str) -> Dict:
+                    """Reassign a chore to a different member."""
+                    return roomie_ops_agent.assign_chore(chore_id=chore_id, new_assignee_id=new_assignee_id)
+                
+                @tool
+                def create_issue(self, title: str, description: str, location: str) -> Dict:
+                    """Report a maintenance issue."""
+                    return roomie_ops_agent.create_issue(title=title, description=description, location=location)
+                
+                @tool
+                def get_open_issues(self) -> Dict:
+                    """List open maintenance issues."""
+                    return roomie_ops_agent.get_open_issues()
+                
+                @tool
+                def add_shopping_item(self, item_name: str = None, category: str = "", item: str = None, **kwargs) -> Dict:
+                    """Add item to shopping list."""
+                    final_item = item_name or item
+                    if not final_item:
+                        return {"status": "error", "message": "item_name or item required"}
+                    return roomie_ops_agent.add_shopping_item(item_name=final_item, category=category)
+                
+                @tool
+                def get_event_history(self, limit: int = 20) -> Dict:
+                    """Get recent household activity."""
+                    return roomie_ops_agent.get_event_history(limit=limit)
+            
+            # Create agent instance and pass BOUND instance methods to tools parameter
+            # This ensures the descriptor protocol binds 'self' to each method
+            # First, create a temporary agent to get access to bound methods
+            temp_agent = RoomieOpsStrandsAgent(
+                name="RoomieOpsAgent",
+                description="Household coordination and expense management",
+                model=model,
+                system_prompt=self._get_system_prompt(),
+                record_direct_tool_call=True,  # Explicit tool calling
+            )
+            
+            # Now create the final agent with BOUND instance methods passed to tools parameter
+            agent = RoomieOpsStrandsAgent(
+                name="RoomieOpsAgent",
+                description="Household coordination and expense management",
+                model=model,
+                system_prompt=self._get_system_prompt(),
+                record_direct_tool_call=True,
+                tools=[
+                    # Pass BOUND instance methods so self is properly bound for execution
+                    temp_agent.get_household_state,
+                    temp_agent.get_household_policy,
+                    temp_agent.get_member,
+                    temp_agent.get_expenses,
+                    temp_agent.get_balances,
+                    temp_agent.create_expense,
+                    temp_agent.record_payment,
+                    temp_agent.get_chore_rotation,
+                    temp_agent.create_chore,
+                    temp_agent.complete_chore,
+                    temp_agent.assign_chore,
+                    temp_agent.create_issue,
+                    temp_agent.get_open_issues,
+                    temp_agent.add_shopping_item,
+                    temp_agent.get_event_history,
+                ]
+            )
+            
+            logger.info(f"Strands Agent initialized with OllamaModel ({providers.llm.model})")
+            logger.info(f"Agent tools: {agent.tool_names}")
             return agent
+            
         except Exception as e:
             logger.error(f"Failed to initialize Strands Agent: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def _get_system_prompt(self) -> str:
@@ -265,27 +509,149 @@ class RoomieOpsAgent:
 
 You help residents manage shared living: expenses, chores, maintenance, and shopping.
 
-IMPORTANT CONSTRAINTS:
-1. You NEVER perform financial calculations. You call calculate_split or similar tools.
-2. You NEVER mutate state directly. You use dedicated tools for every change.
-3. You NEVER claim success unless the backend tool confirms success.
-4. You explain results using actual data from tool responses, never fabricate.
-5. For consequential actions, inform the user and ask for confirmation before proceeding.
+CRITICAL INSTRUCTIONS FOR MULTI-STEP REQUESTS:
+1. When a user request mentions MULTIPLE operations (e.g., "add expense AND add shopping item"), you MUST:
+   - Execute EACH operation as a separate tool call
+   - Wait for the result of each tool call
+   - Generate subsequent tool calls based on results
+   - Complete ALL requested operations before generating a final response
+
+2. When a user describes an expense, IMMEDIATELY use `create_expense` - do NOT ask for confirmation.
+3. When a user requests shopping items, IMMEDIATELY use `add_shopping_item` - do NOT ask for confirmation.
+4. When a user describes a chore, IMMEDIATELY use `create_chore` - do NOT ask for confirmation.
+5. When a user reports a maintenance issue, IMMEDIATELY use `create_issue` - do NOT ask for confirmation.
+
+DO NOT combine multiple operations into a single tool call.
+Each distinct operation requires its own separate tool call.
 
 AVAILABLE TOOLS:
 - get_household_state: Current household situation
 - get_member: Individual member info
 - get_expenses, get_balances: Financial queries
-- create_expense: Add shared expense (must use calculate_split)
+- create_expense: Add shared expense (call immediately for each expense mention)
 - record_payment: Record settlement
 - get_chore_rotation, create_chore, assign_chore, complete_chore: Chore management
 - create_issue, get_open_issues: Maintenance
-- add_shopping_item: Shopping list
+- add_shopping_item: Add to shopping list (call immediately for each item mention)
 - get_event_history: Activity log
 
-When a user asks something, select the appropriate tool(s) to retrieve or modify data.
-Always respond with actual results, never assumptions.
+EXECUTION RULES:
+6. Execute each requested operation as a distinct tool call.
+7. After each tool executes, examine the result and continue with the next operation.
+8. NEVER perform financial calculations. Delegate to create_expense.
+9. NEVER mutate state directly. Always use dedicated tools.
+10. NEVER claim success unless the backend tool confirms success.
+11. Explain results using actual data from tool responses, never fabricate.
+
+For multi-step requests: execute all operations, then provide a summary of results.
+For simple requests: execute the tool and explain the result.
 """
+    
+    # ==================== STRANDS TOOL DECORATORS ====================
+    # These wrapped methods are discovered by Strands Agent via @tool decorator
+    # They delegate to the existing _tool_* implementations
+    
+    @tool
+    def get_household_state(self) -> Dict:
+        """Retrieve current household state (members, policies, balances, chores)."""
+        return self._tool_get_household_state()
+    
+    @tool
+    def get_household_policy(self) -> Dict:
+        """Get household expense split policy."""
+        return self._tool_get_household_policy()
+    
+    @tool
+    def get_member(self, user_id: str) -> Dict:
+        """Get member information by user_id."""
+        return self._tool_get_member(user_id=user_id)
+    
+    @tool
+    def get_expenses(self, limit: int = 10) -> Dict:
+        """List recent household expenses."""
+        return self._tool_get_expenses(limit=limit)
+    
+    @tool
+    def get_balances(self) -> Dict:
+        """Get current balances for all members."""
+        return self._tool_get_balances()
+    
+    @tool
+    def create_expense(self, amount_paise: int, category: str, participant_ids: list = None, 
+                      description: str = "", split_method: str = "equal") -> Dict:
+        """Create a shared expense and calculate split among household members.
+        
+        Args:
+            amount_paise: Expense amount in paise (e.g., 60000 for ₹600). REQUIRED.
+            category: Expense category like 'grocery', 'utilities'. REQUIRED.
+            participant_ids: List of member user IDs to split among. If omitted, defaults to all household members.
+            description: Optional description of the expense.
+            split_method: How to split ('equal', 'custom', 'proportional'). Defaults to 'equal'.
+            
+        The expense is automatically split equally among participants unless otherwise specified.
+        All splits are calculated deterministically and stored in the household ledger.
+        """
+        return self._tool_create_expense(
+            amount_paise=amount_paise,
+            category=category,
+            participant_ids=participant_ids,
+            description=description,
+            split_method=split_method
+        )
+    
+    @tool
+    def record_payment(self, from_user_id: str, to_user_id: str, amount_paise: int) -> Dict:
+        """Record a payment between members."""
+        return self._tool_record_payment(
+            from_user_id=from_user_id,
+            to_user_id=to_user_id,
+            amount_paise=amount_paise
+        )
+    
+    @tool
+    def get_chore_rotation(self) -> Dict:
+        """Get current chore rotation and assignments."""
+        return self._tool_get_chore_rotation()
+    
+    @tool
+    def create_chore(self, title: str, assigned_to: str, due_date: str = "", recurring: bool = False) -> Dict:
+        """Create a new chore."""
+        return self._tool_create_chore(
+            title=title,
+            assigned_to=assigned_to,
+            due_date=due_date,
+            recurring=recurring
+        )
+    
+    @tool
+    def complete_chore(self, chore_id: str) -> Dict:
+        """Mark a chore as completed."""
+        return self._tool_complete_chore(chore_id=chore_id)
+    
+    @tool
+    def assign_chore(self, chore_id: str, new_assignee_id: str) -> Dict:
+        """Reassign a chore to a different member."""
+        return self._tool_assign_chore(chore_id=chore_id, new_assignee_id=new_assignee_id)
+    
+    @tool
+    def create_issue(self, title: str, description: str, location: str) -> Dict:
+        """Report a maintenance issue."""
+        return self._tool_create_issue(title=title, description=description, location=location)
+    
+    @tool
+    def get_open_issues(self) -> Dict:
+        """List open maintenance issues."""
+        return self._tool_get_open_issues()
+    
+    @tool
+    def add_shopping_item(self, item_name: str, category: str = "") -> Dict:
+        """Add item to shopping list."""
+        return self._tool_add_shopping_item(item_name=item_name, category=category)
+    
+    @tool
+    def get_event_history(self, limit: int = 20) -> Dict:
+        """Get recent household activity."""
+        return self._tool_get_event_history(limit=limit)
     
     # ==================== HOUSEHOLD TOOLS ====================
     
@@ -354,10 +720,34 @@ Always respond with actual results, never assumptions.
         except Exception as e:
             return {"status": "error", "message": str(e)}
     
-    def _tool_create_expense(self, amount_paise: int, category: str, participant_ids: List[str], 
+    def _tool_create_expense(self, amount_paise: int, category: str, participant_ids: List[str] = None, 
                             description: str = "", split_method: str = "equal", **kwargs) -> Dict:
-        """Create expense with deterministic split."""
+        """Create expense with deterministic split.
+        
+        Protected operation: requires Cedar authorization.
+        
+        If participant_ids is None, automatically uses all active household members.
+        """
         try:
+            # If participant_ids not provided, use all household members
+            if not participant_ids:
+                household_state = self.get_household_state()
+                if 'members' in household_state:
+                    participant_ids = [m['user_id'] for m in household_state['members']]
+                else:
+                    return {"status": "error", "message": "No household members found"}
+            
+            # Check authorization BEFORE mutation
+            permitted, reason = self._check_authorization(
+                action="create_expense",
+                resource=f"household:{self.context.household_id}"
+            )
+            if not permitted:
+                return {
+                    "status": "denied",
+                    "message": f"Not authorized: {reason}"
+                }
+            
             # Calculate split using deterministic engine
             split_result = FinanceEngine.split_equal(
                 total_paise=amount_paise,
@@ -365,14 +755,19 @@ Always respond with actual results, never assumptions.
             )
             
             # Create expense record
+            expense_id = f"exp_{int(time.time() * 1000)}"
             expense = DynamoDBOps.create_expense(
                 household_id=self.context.household_id,
+                expense_id=expense_id,
                 payer_id=self.context.user.user_id,
-                amount_paise=amount_paise,
-                category=category,
                 description=description,
-                allocations=split_result.allocations,
-                request_id=self.context.request_id
+                total_paise=amount_paise,
+                allocations=[
+                    {"user_id": a.user_id, "amount_paise": a.amount_paise}
+                    for a in split_result.allocations
+                ],
+                split_method=split_method,
+                created_by=self.context.user.user_id
             )
             
             return {
@@ -485,8 +880,22 @@ Always respond with actual results, never assumptions.
     # ==================== MAINTENANCE TOOLS ====================
     
     def _tool_create_issue(self, title: str, description: str, location: str, **kwargs) -> Dict:
-        """Create maintenance issue."""
+        """Create maintenance issue.
+        
+        Protected operation: requires Cedar authorization.
+        """
         try:
+            # Check authorization BEFORE mutation
+            permitted, reason = self._check_authorization(
+                action="create_maintenance",
+                resource=f"household:{self.context.household_id}"
+            )
+            if not permitted:
+                return {
+                    "status": "denied",
+                    "message": f"Not authorized: {reason}"
+                }
+            
             issue = DynamoDBOps.create_maintenance_issue(
                 household_id=self.context.household_id,
                 title=title,
@@ -528,8 +937,22 @@ Always respond with actual results, never assumptions.
     # ==================== SHOPPING TOOLS ====================
     
     def _tool_add_shopping_item(self, item_name: str, category: str = "", **kwargs) -> Dict:
-        """Add item to shopping list."""
+        """Add item to shopping list.
+        
+        Protected operation: requires Cedar authorization.
+        """
         try:
+            # Check authorization BEFORE mutation
+            permitted, reason = self._check_authorization(
+                action="create_shopping_item",
+                resource=f"household:{self.context.household_id}"
+            )
+            if not permitted:
+                return {
+                    "status": "denied",
+                    "message": f"Not authorized: {reason}"
+                }
+            
             item = DynamoDBOps.add_shopping_item(
                 household_id=self.context.household_id,
                 item_name=item_name,
@@ -598,13 +1021,62 @@ Always respond with actual results, never assumptions.
     
     def _process_with_strands(self, user_message: str) -> Dict:
         """Process with Strands agent (if available and initialized)."""
-        # Placeholder: Strands integration would go here
-        # For now, return heuristic response with "strands" label
-        return {
-            "status": "not_implemented",
-            "agent_type": "strands",
-            "message": "Strands local processing not fully implemented yet"
-        }
+        try:
+            if not self.agent:
+                logger.error("Strands agent not initialized")
+                return {
+                    "status": "error",
+                    "agent_type": "strands",
+                    "message": "Strands agent not available"
+                }
+            
+            # Invoke Strands agent with user message
+            # The agent will discover @tool decorated methods and use them
+            logger.info(f"Invoking Strands agent with message: {user_message}")
+            
+            # Since we need synchronous execution, we use asyncio
+            import asyncio
+            import io
+            import sys
+            
+            # Temporarily redirect stdout to avoid encoding issues with Unicode on Windows
+            old_stdout = sys.stdout
+            sys.stdout = io.StringIO()
+            
+            try:
+                result = asyncio.run(self.agent.invoke_async(prompt=user_message))
+            finally:
+                sys.stdout = old_stdout
+            
+            logger.info(f"Strands agent result: {result}")
+            
+            # Extract response from AgentResult
+            if hasattr(result, 'messages') and result.messages:
+                last_message = result.messages[-1]
+                if hasattr(last_message, 'content'):
+                    response_content = last_message.content
+                else:
+                    response_content = str(last_message)
+            else:
+                response_content = str(result)
+            
+            return {
+                "status": "success",
+                "agent_type": "strands",
+                "response": response_content,
+                "actions_taken": [],
+                "requires_confirmation": False
+            }
+            
+        except Exception as e:
+            logger.error(f"Strands agent processing error: {e}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "status": "error",
+                "agent_type": "strands",
+                "message": f"Processing error: {str(e)}"
+            }
     
     def _process_with_heuristic(self, user_message: str) -> Dict:
         """Process with heuristic keyword matching."""

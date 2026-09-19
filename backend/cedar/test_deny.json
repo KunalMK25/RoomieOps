@@ -1,0 +1,12 @@
+{
+  "principal": {
+    "type": "User",
+    "id": "kunal"
+  },
+  "action": "create_expense",
+  "resource": {
+    "type": "Household",
+    "id": "household-b"
+  },
+  "context": {}
+}

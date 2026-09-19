@@ -24,7 +24,13 @@ logger.warning(
     "bedrock.py is DEPRECATED. Use bedrock_client.py with provider abstraction instead."
 )
 
-bedrock = boto3.client("bedrock-runtime")
+# Try to initialize boto3 client; if it fails (no AWS creds), set to None
+# The module will still import successfully, and call_bedrock will raise BedrockError
+try:
+    bedrock = boto3.client("bedrock-runtime")
+except Exception as e:
+    logger.warning(f"Failed to initialize boto3 Bedrock client: {e}")
+    bedrock = None
 
 
 class BedrockError(Exception):
@@ -50,6 +56,9 @@ def call_bedrock(
     Raises:
         BedrockError: If the API call fails or response is invalid
     """
+    if bedrock is None:
+        raise BedrockError("Bedrock client not available (no AWS credentials)")
+    
     if model_id is None:
         import os
 

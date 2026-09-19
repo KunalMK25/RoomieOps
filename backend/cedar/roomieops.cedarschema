@@ -1,0 +1,22 @@
+entity User in [Household];
+entity Household;
+
+action read_household appliesTo {
+  principal: User,
+  resource: Household
+};
+
+action create_expense appliesTo {
+  principal: User,
+  resource: Household
+};
+
+action create_maintenance appliesTo {
+  principal: User,
+  resource: Household
+};
+
+action create_shopping_item appliesTo {
+  principal: User,
+  resource: Household
+};

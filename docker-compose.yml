@@ -14,8 +14,9 @@ services:
       - AWS_DEFAULT_REGION=us-east-1
       - AWS_ACCESS_KEY_ID=test
       - AWS_SECRET_ACCESS_KEY=test
+      - LOCALSTACK_AUTH_TOKEN=${LOCALSTACK_AUTH_TOKEN:-}
     volumes:
-      - "${TMPDIR:-.}/.localstack:/tmp/localstack"
+      - "localstack-data:/var/lib/localstack"
       - "/var/run/docker.sock:/var/run/docker.sock"
     networks:
       - roomieops-network
@@ -47,6 +48,7 @@ services:
       - roomieops-network
 
 volumes:
+  localstack-data:
   dynamodb-data:
   s3-data:
 

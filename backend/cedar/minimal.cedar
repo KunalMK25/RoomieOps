@@ -1,0 +1,5 @@
+permit (
+    principal == User::"kunal",
+    action == Action::"read_household",
+    resource == Household::"household-A"
+);

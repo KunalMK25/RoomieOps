@@ -26,20 +26,22 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "shared"))
 
 # Try to import bedrock (will use mock if unavailable)
 try:
-    from bedrock import call_bedrock, extract_json_from_response
+    from bedrock import call_bedrock, extract_json_from_response, BedrockError
     BEDROCK_AVAILABLE = True
-except ImportError:
+except (ImportError, Exception) as e:
     BEDROCK_AVAILABLE = False
-    print("⚠️ Bedrock module not found - using mock responses")
+    print(f"⚠️ Bedrock module not available ({e}) - using mock responses")
 
 # Initialize provider layer based on execution mode
 try:
     from providers import ExecutionModeManager
+    from providers.types import ExecutionMode
     import logging
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
     
-    providers = ExecutionModeManager.init()
+    # Force LOCAL_HEURISTIC mode for local dev (no Docker/LocalStack)
+    providers = ExecutionModeManager.init(mode=ExecutionMode.LOCAL_HEURISTIC)
     logger.info(f"✓ Providers initialized: {ExecutionModeManager.current_mode()}")
 except Exception as e:
     print(f"⚠️ Provider initialization failed: {e}")
@@ -519,6 +521,235 @@ Keep it under 200 words. Use {lang_name} language."""
         return "आपके चिकित्सा दस्तावेजों के आधार पर, आप परीक्षा के लिए योग्य हैं। चिकित्सा कारणों से उपस्थिति आवश्यकता में छूट दी गई है। कृपया अपना चिकित्सा प्रमाणपत्र परीक्षा पंजीकरण के समय जमा करें।"
     else:
         return "Based on your medical documentation, you are eligible to take the exam. Medical grounds are recognized for absence exemption under the college attendance policy. Please submit your medical certificate during exam registration."
+
+
+# ============================================================================
+# RoomieOps Household Routes (for Phase 4 frontend integration testing)
+# ============================================================================
+
+# Mock storage for testing (will use in-memory or JSON files)
+_households = {}
+_members = {}
+_expenses = {}
+
+
+def get_auth_token(request_obj):
+    """Extract Bearer token from Authorization header."""
+    auth_header = request_obj.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]  # Remove "Bearer " prefix
+    return None
+
+
+def mock_user_from_token(token: str | None) -> Dict[str, str]:
+    """Create a mock user from token for local development."""
+    if not token:
+        token = "local-user"
+    # Extract user_id from token (for dev, just use token as ID)
+    return {
+        "user_id": token[:8] if len(token) > 8 else token,
+        "username": f"user_{token[:4]}",
+        "email": f"user_{token[:4]}@roomieops.local",
+    }
+
+
+@app.route("/households/<household_id>", methods=["GET"])
+def get_household_route(household_id):
+    """GET /households/{id} - Get household details."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    # Return mock household
+    household = _households.get(household_id, {
+        "id": household_id,
+        "name": f"Test Household {household_id[:4]}",
+        "description": "A test household for integration testing",
+        "members": _members.get(household_id, []),
+        "created_at": datetime.utcnow().isoformat(),
+    })
+    
+    return jsonify(household), 200
+
+
+@app.route("/households/<household_id>/members", methods=["GET"])
+def get_members_route(household_id):
+    """GET /households/{id}/members - List all members."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    members = _members.get(household_id, [
+        {
+            "user_id": "user_1",
+            "name": "Alice",
+            "email": "alice@roomieops.local",
+            "role": "admin",
+            "status": "active",
+        },
+        {
+            "user_id": "user_2",
+            "name": "Bob",
+            "email": "bob@roomieops.local",
+            "role": "member",
+            "status": "active",
+        },
+    ])
+    
+    return jsonify({"members": members}), 200
+
+
+@app.route("/households/<household_id>/expenses", methods=["GET"])
+def get_expenses_route(household_id):
+    """GET /households/{id}/expenses - List expenses."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    expenses = _expenses.get(household_id, [
+        {
+            "id": "exp_1",
+            "household_id": household_id,
+            "paid_by": "user_1",
+            "amount": 50.00,
+            "description": "Groceries",
+            "category": "food",
+            "date": datetime.utcnow().isoformat(),
+        },
+        {
+            "id": "exp_2",
+            "household_id": household_id,
+            "paid_by": "user_2",
+            "amount": 30.00,
+            "description": "Utilities",
+            "category": "utilities",
+            "date": datetime.utcnow().isoformat(),
+        },
+    ])
+    
+    return jsonify({"expenses": expenses}), 200
+
+
+@app.route("/households/<household_id>/expenses", methods=["POST"])
+def create_expense_route(household_id):
+    """POST /households/{id}/expenses - Create expense."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    data = request.get_json()
+    
+    expense = {
+        "id": f"exp_{uuid.uuid4().hex[:8]}",
+        "household_id": household_id,
+        "paid_by": user["user_id"],
+        "amount": data.get("amount", 0),
+        "description": data.get("description", ""),
+        "category": data.get("category", "other"),
+        "date": datetime.utcnow().isoformat(),
+    }
+    
+    if household_id not in _expenses:
+        _expenses[household_id] = []
+    _expenses[household_id].append(expense)
+    
+    return jsonify(expense), 201
+
+
+@app.route("/households/<household_id>/balances", methods=["GET"])
+def get_balances_route(household_id):
+    """GET /households/{id}/balances - Get all balances."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    balances = {
+        "household_id": household_id,
+        "user_1": 20.00,
+        "user_2": -20.00,
+    }
+    
+    return jsonify(balances), 200
+
+
+@app.route("/households/<household_id>/chores", methods=["GET"])
+def get_chores_route(household_id):
+    """GET /households/{id}/chores - List chores."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    chores = [
+        {
+            "id": "chore_1",
+            "household_id": household_id,
+            "title": "Clean kitchen",
+            "assigned_to": "user_1",
+            "status": "pending",
+        },
+        {
+            "id": "chore_2",
+            "household_id": household_id,
+            "title": "Bathroom cleaning",
+            "assigned_to": "user_2",
+            "status": "completed",
+        },
+    ]
+    
+    return jsonify({"chores": chores}), 200
+
+
+@app.route("/households/<household_id>/maintenance", methods=["GET"])
+def get_maintenance_route(household_id):
+    """GET /households/{id}/maintenance - List maintenance issues."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    issues = []
+    return jsonify({"issues": issues}), 200
+
+
+@app.route("/households/<household_id>/shopping", methods=["GET"])
+def get_shopping_route(household_id):
+    """GET /households/{id}/shopping - List shopping items."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    items = []
+    return jsonify({"items": items}), 200
+
+
+@app.route("/households/<household_id>/copilot", methods=["POST"])
+def copilot_request_route(household_id):
+    """POST /households/{id}/copilot - Submit copilot request."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    data = request.get_json()
+    message = data.get("message", "")
+    
+    # Mock copilot response
+    response = {
+        "id": f"copilot_{uuid.uuid4().hex[:8]}",
+        "household_id": household_id,
+        "user_id": user["user_id"],
+        "message": message,
+        "response": "This is a mock copilot response to: " + message,
+        "timestamp": datetime.utcnow().isoformat(),
+    }
+    
+    return jsonify(response), 200
+
+
+@app.route("/households/<household_id>/copilot/confirm", methods=["POST"])
+def copilot_confirm_route(household_id):
+    """POST /households/{id}/copilot/confirm - Confirm copilot action."""
+    token = get_auth_token(request)
+    user = mock_user_from_token(token)
+    
+    data = request.get_json()
+    action_id = data.get("action_id")
+    confirmed = data.get("confirmed", False)
+    
+    return jsonify({
+        "action_id": action_id,
+        "confirmed": confirmed,
+        "status": "processed",
+    }), 200
 
 
 # ============================================================================

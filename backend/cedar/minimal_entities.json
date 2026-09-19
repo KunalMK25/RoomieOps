@@ -1,0 +1,26 @@
+[
+  {
+    "uid": {
+      "type": "User",
+      "id": "kunal"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "Household",
+      "id": "household-A"
+    },
+    "attrs": {},
+    "parents": []
+  },
+  {
+    "uid": {
+      "type": "Household",
+      "id": "household-B"
+    },
+    "attrs": {},
+    "parents": []
+  }
+]

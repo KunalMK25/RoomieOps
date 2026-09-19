@@ -134,11 +134,13 @@ class ExecutionModeManager:
         storage_endpoint = os.environ.get("DYNAMODB_ENDPOINT", "http://localhost:4566")
         cedar_endpoint = os.environ.get("CEDAR_ENDPOINT", "http://localhost:8180")
         
+        storage = LocalStackProvider(endpoint=storage_endpoint)
+        
         return ProviderSet(
             llm=OllamaLLMProvider(endpoint=llm_endpoint),
-            storage=LocalStackProvider(endpoint=storage_endpoint),
+            storage=storage,
             auth=CedarAuthProvider(endpoint=cedar_endpoint),
-            authorization=CedarAuthorizationProvider(endpoint=cedar_endpoint),
+            authorization=CedarAuthorizationProvider(storage=storage),
             retrieval=InMemoryRetrievalProvider(),
         )
     

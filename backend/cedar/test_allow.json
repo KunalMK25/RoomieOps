@@ -1,0 +1,12 @@
+{
+  "principal": {
+    "type": "User",
+    "id": "kunal"
+  },
+  "action": "read_household",
+  "resource": {
+    "type": "Household",
+    "id": "household-a"
+  },
+  "context": {}
+}

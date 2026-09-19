@@ -161,7 +161,7 @@ class OllamaLLMProvider(LLMProvider):
             import requests
             self.requests = requests
             self.endpoint = endpoint
-            self.model = os.environ.get("LLM_MODEL", "mistral")
+            self.model = os.environ.get("LLM_MODEL", "llama3.2:3b")
             self.timeout = 30
             
             # Verify Ollama is reachable
