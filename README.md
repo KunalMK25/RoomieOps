@@ -346,16 +346,4 @@ Future enhancements planned for RoomieOps:
 
 We welcome contributions! Please feel free to open issues, submit pull requests, or suggest improvements.
 
----
 
-## License
-
-License: Not yet specified.
-
----
-
-## Questions?
-
-For questions or issues, open a GitHub issue or contact the maintainers.
-
-**Built with ❤️ for shared living.**
